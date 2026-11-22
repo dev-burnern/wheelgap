@@ -20,9 +20,10 @@ too.
 
 ## Tools
 
-All eight are read-only. Package checks look packages up on PyPI, or on the index in
-`WHEELGAP_INDEX_URL`; `list_targets` and `suggest_targets` contact nothing. Like wheelgap the server needs nothing beyond
-`packaging`.
+All eight are read-only. Package checks look packages up on PyPI, or on another index configured via
+`WHEELGAP_INDEX_URL` in the MCP server's environment (or `index-url` in `[tool.wheelgap]` for a URL without
+credentials; see [private indexes](how-it-works.md#private-indexes)). `list_targets` and `suggest_targets` contact
+nothing. Like wheelgap the server needs nothing beyond `packaging`.
 
 - `check_package`: one package, the latest release or a given version, on each
   target. `explain: true` adds why each target with a gap can't use its

@@ -1039,6 +1039,16 @@ _CLI_ADVICE = {
     "pass -p/-t instead": "use check_lockfile with python and targets instead",
     "pass -t and --glibc instead": "use check_lockfile with targets and glibc instead",
     "pass --build-arg if the build sets one": "pass build_args if the build supplies a value",
+    "pass the URL with --index-url from a CI secret instead": (
+        "set WHEELGAP_INDEX_URL in the MCP server's environment instead "
+        "(index-url in [tool.wheelgap] is for URLs without credentials)"
+    ),
+    "To use a simple index, pass --index-url instead.": (
+        "To use a simple index, set WHEELGAP_INDEX_URL in the MCP server's environment "
+        "(or index-url in [tool.wheelgap] for a URL without credentials)."
+    ),
+    "select targets with -t": "pass targets explicitly",
+    "add it to -t as well": "include it in targets as well",
     # A uv.lock checked with offline: false. The tools have no text report, and return pip_refuses with a gap only.
     "(the text report's --explain says which, and --json lists the files in pip_refuses)": (
         "(a package with a gap lists the files in its pip_refuses)"
@@ -1059,6 +1069,9 @@ _CLI_ADVICE = {
     "--dist": "check_dist",
     "--ignore": "ignore in [tool.wheelgap]",
     "(--index-url, or index-url in [tool.wheelgap])": "(index-url in [tool.wheelgap])",
+    "--index-url": "WHEELGAP_INDEX_URL (or index-url in [tool.wheelgap] without credentials)",
+    "-t": "targets",
+    "-p": "python",
 }
 # The same advice from a tool that has no offline, dependencies or environment argument (check_dockerfile, check_dist).
 _CLI_ADVICE_ELSEWHERE = {

@@ -848,10 +848,67 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
         ),
         ("/srv/--fix/uv.lock: no such file or directory", True, None),
         ("C:\\srv\\--deps\\uv.lock: invalid TOML", True, None),
+        (
+            "[tool.wheelgap] index-url must not contain credentials: "
+            "pass the URL with --index-url from a CI secret instead",
+            True,
+            "[tool.wheelgap] index-url must not contain credentials: "
+            "set WHEELGAP_INDEX_URL in the MCP server's environment instead "
+            "(index-url in [tool.wheelgap] is for URLs without credentials)",
+        ),
+        (
+            "To use a simple index, pass --index-url instead.",
+            True,
+            "To use a simple index, set WHEELGAP_INDEX_URL in the MCP server's environment "
+            "(or index-url in [tool.wheelgap] for a URL without credentials).",
+        ),
+        (
+            "pyproject.toml [tool.uv] required-environments matches none of the native targets for Python 3.13, "
+            "so the default targets are checked; select targets with -t",
+            True,
+            "pyproject.toml [tool.uv] required-environments matches none of the native targets for Python 3.13, "
+            "so the default targets are checked; pass targets explicitly",
+        ),
+        ("add it to -t as well", True, "include it in targets as well"),
+        # Short flags must not match inside longer flags, paths, or pip install commands.
+        ("unknown flag --no-try", True, None),
+        ("/srv/-t/uv.lock: no such file or directory", True, None),
+        ("Dockerfile:4: pip install -t /tmp/pkg six", False, None),
     ],
 )
 def test_cli_advice_is_translated_for_the_calling_tool(message, lockfile, translated):
     assert mcp._translate_cli_message(message, lockfile=lockfile) == (translated or message)
+
+
+def test_check_lockfile_translates_index_url_credentials_and_short_target_flag(fake_pypi, tmp_path):
+    # 1. Credentials in [tool.wheelgap] index-url: error must not tell MCP client to pass --index-url.
+    cred_dir = tmp_path / "creds"
+    cred_dir.mkdir()
+    (cred_dir / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (cred_dir / "pyproject.toml").write_text(
+        '[tool.wheelgap]\nindex-url = "https://user:secret@pkgs.example.com/simple"\n',
+        encoding="utf-8",
+    )
+    (_, cred_reply) = run(init(), call("check_lockfile", path=str(cred_dir / "requirements.txt"), python="3.13"))
+    assert cred_reply["result"]["isError"] is True
+    cred_text = cred_reply["result"]["content"][0]["text"]
+    assert "--index-url" not in cred_text
+    assert "WHEELGAP_INDEX_URL" in cred_text
+
+    # 2. Unmatched [tool.uv] required-environments: note must not tell MCP client to select targets with -t.
+    env_dir = tmp_path / "env"
+    env_dir.mkdir()
+    (env_dir / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (env_dir / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+        "[tool.uv]\nrequired-environments = [\"sys_platform == 'freebsd'\"]\n",
+        encoding="utf-8",
+    )
+    (_, env_reply) = run(init(), call("check_lockfile", path=str(env_dir / "requirements.txt"), python="3.13"))
+    assert env_reply["result"]["isError"] is False
+    notes = env_reply["result"]["structuredContent"].get("notes", [])
+    assert any("pass targets explicitly" in note for note in notes)
+    assert all(" -t" not in note for note in notes)
 
 
 def test_check_lockfile_ignores_from_config(fake_pypi, tmp_path, fixtures):
