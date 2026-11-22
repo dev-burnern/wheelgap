@@ -1039,13 +1039,15 @@ _CLI_ADVICE = {
     "pass -p/-t instead": "use check_lockfile with python and targets instead",
     "pass -t and --glibc instead": "use check_lockfile with targets and glibc instead",
     "pass --build-arg if the build sets one": "pass build_args if the build supplies a value",
+    # WHEELGAP_INDEX_URL is a JSON API mirror (pypi.check_index_url refuses /simple), not a simple index, so the advice
+    # for a simple index is index-url in [tool.wheelgap], which takes no credentials.
     "pass the URL with --index-url from a CI secret instead": (
-        "set WHEELGAP_INDEX_URL in the MCP server's environment instead "
-        "(index-url in [tool.wheelgap] is for URLs without credentials)"
+        "an MCP tool can't take an index URL with credentials: set index-url in [tool.wheelgap] to one without "
+        "them, or run wheelgap --index-url from a shell"
     ),
     "To use a simple index, pass --index-url instead.": (
-        "To use a simple index, set WHEELGAP_INDEX_URL in the MCP server's environment "
-        "(or index-url in [tool.wheelgap] for a URL without credentials)."
+        "To use a simple index, set index-url in [tool.wheelgap] (a URL without credentials) for the tools that "
+        "check a project's files."
     ),
     "select targets with -t": "pass targets explicitly",
     "add it to -t as well": "include it in targets as well",
@@ -1069,9 +1071,9 @@ _CLI_ADVICE = {
     "--dist": "check_dist",
     "--ignore": "ignore in [tool.wheelgap]",
     "(--index-url, or index-url in [tool.wheelgap])": "(index-url in [tool.wheelgap])",
-    "--index-url": "WHEELGAP_INDEX_URL (or index-url in [tool.wheelgap] without credentials)",
-    "-t": "targets",
-    "-p": "python",
+    # Over MCP only the [tool.wheelgap] value reaches the URL checks (empty, not https, ...). Bare -t and -p aren't in
+    # the table: error text quotes Dockerfile lines (mkdir -p, cp -t), so only wheelgap's own phrases above change.
+    "--index-url": "index-url in [tool.wheelgap]",
 }
 # The same advice from a tool that has no offline, dependencies or environment argument (check_dockerfile, check_dist).
 _CLI_ADVICE_ELSEWHERE = {

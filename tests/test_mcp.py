@@ -853,14 +853,21 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
             "pass the URL with --index-url from a CI secret instead",
             True,
             "[tool.wheelgap] index-url must not contain credentials: "
-            "set WHEELGAP_INDEX_URL in the MCP server's environment instead "
-            "(index-url in [tool.wheelgap] is for URLs without credentials)",
+            "an MCP tool can't take an index URL with credentials: set index-url in [tool.wheelgap] to one without "
+            "them, or run wheelgap --index-url from a shell",
         ),
         (
-            "To use a simple index, pass --index-url instead.",
+            "WHEELGAP_INDEX_URL points at a simple index (pkgs.example.com); wheelgap needs the JSON API, "
+            "e.g. https://pypi.org/pypi. To use a simple index, pass --index-url instead.",
             True,
-            "To use a simple index, set WHEELGAP_INDEX_URL in the MCP server's environment "
-            "(or index-url in [tool.wheelgap] for a URL without credentials).",
+            "WHEELGAP_INDEX_URL points at a simple index (pkgs.example.com); wheelgap needs the JSON API, "
+            "e.g. https://pypi.org/pypi. To use a simple index, set index-url in [tool.wheelgap] (a URL without "
+            "credentials) for the tools that check a project's files.",
+        ),
+        (
+            "--index-url must use https (plain http is only allowed for localhost)",
+            True,
+            "index-url in [tool.wheelgap] must use https (plain http is only allowed for localhost)",
         ),
         (
             "pyproject.toml [tool.uv] required-environments matches none of the native targets for Python 3.13, "
@@ -874,6 +881,10 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
         ("unknown flag --no-try", True, None),
         ("/srv/-t/uv.lock: no such file or directory", True, None),
         ("Dockerfile:4: pip install -t /tmp/pkg six", False, None),
+        # Short flags in a quoted Dockerfile line are the shell's, not wheelgap's.
+        ("RUN <<\"EOF mkdir -p /app: Docker can't read the heredoc", False, None),
+        ("Dockerfile:4: pip install --no-deps -t /deps six", False, None),
+        ("Dockerfile:5: docker build -t app .", False, None),
     ],
 )
 def test_cli_advice_is_translated_for_the_calling_tool(message, lockfile, translated):
@@ -892,8 +903,9 @@ def test_check_lockfile_translates_index_url_credentials_and_short_target_flag(f
     (_, cred_reply) = run(init(), call("check_lockfile", path=str(cred_dir / "requirements.txt"), python="3.13"))
     assert cred_reply["result"]["isError"] is True
     cred_text = cred_reply["result"]["content"][0]["text"]
-    assert "--index-url" not in cred_text
-    assert "WHEELGAP_INDEX_URL" in cred_text
+    assert "--index-url from a CI secret" not in cred_text
+    assert "set index-url in [tool.wheelgap] to one without them" in cred_text
+    assert "WHEELGAP_INDEX_URL" not in cred_text
 
     # 2. Unmatched [tool.uv] required-environments: note must not tell MCP client to select targets with -t.
     env_dir = tmp_path / "env"
