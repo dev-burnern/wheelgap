@@ -1082,6 +1082,28 @@ def _add_dir(dirs: set[str], folder: str) -> None:
         folder = posixpath.dirname(folder)
 
 
+def _folder_ignored(rel: str, host: Path, context: Path, ignore_rules: tuple[dockerignore.Rule, ...]) -> str | None:
+    """Return the ignore rule that leaves a copied folder wholly out of the build context, if any."""
+    if not (rule := dockerignore.ignored(rel, ignore_rules)):
+        return None
+    if dockerignore.pruned(rel, ignore_rules):
+        return rule
+    for dirpath, dirnames, filenames in os.walk(host):
+        rel_dir = Path(dirpath).relative_to(context).as_posix()
+        prefix = "" if rel_dir == "." else f"{rel_dir}/"
+        if any(not dockerignore.ignored(f"{prefix}{filename}", ignore_rules) for filename in filenames):
+            return None
+        kept: list[str] = []
+        for dirname in dirnames:
+            entry_rel = f"{prefix}{dirname}"
+            if not dockerignore.ignored(entry_rel, ignore_rules):
+                return None
+            if not dockerignore.pruned(entry_rel, ignore_rules):
+                kept.append(dirname)
+        dirnames[:] = kept
+    return rule
+
+
 def _exact_case_path(base: Path, rel: str) -> tuple[Path | None, str | None]:
     """Resolve `rel` under `base` matching each path component's exact case via `os.listdir()`.
 
@@ -1188,7 +1210,10 @@ def _read_copy(
                 "when an ignore file has rules"
             )
         is_dir = host.is_dir()
-        if not is_dir and (rule := dockerignore.ignored(rel, ignore_rules)):
+        if is_dir:
+            if rule := _folder_ignored(rel, host, context, ignore_rules):
+                return unread(f"COPY {name}: excluded from the build context by {rule}")
+        elif rule := dockerignore.ignored(rel, ignore_rules):
             return unread(f"COPY {name}: excluded from the build context by {rule}")
         sources.append((rel, host, is_dir))
     if dest.startswith("/"):
@@ -1311,7 +1336,12 @@ def _may_hold_packages(copy: _Copy) -> bool:
     return not (into_bin or "." in posixpath.basename(source).lstrip("."))
 
 
-def _copies_config(copy: _Copy, names: tuple[str, ...]) -> bool:
+def _copies_config(
+    copy: _Copy,
+    names: tuple[str, ...],
+    context: Path,
+    ignore_rules: tuple[dockerignore.Rule, ...] = (),
+) -> bool:
     """Whether COPY can put an installer configuration file anywhere in the image."""
     if copy.foreign is not None:
         if names == _UV_CONFIG_NAMES:
@@ -1325,9 +1355,26 @@ def _copies_config(copy: _Copy, names: tuple[str, ...]) -> bool:
         )
     for rel, host, is_dir in copy.sources:
         if is_dir:
-            for _, dirnames, filenames in os.walk(host):
-                if any(name.lower() in names for name in (*dirnames, *filenames)):
+            for dirpath, dirnames, filenames in os.walk(host):
+                if not ignore_rules:
+                    if any(name.lower() in names for name in (*dirnames, *filenames)):
+                        return True
+                    continue
+                rel_dir = Path(dirpath).relative_to(context).as_posix()
+                prefix = "" if rel_dir == "." else f"{rel_dir}/"
+                if any(
+                    name.lower() in names and not dockerignore.ignored(f"{prefix}{name}", ignore_rules)
+                    for name in filenames
+                ):
                     return True
+                kept: list[str] = []
+                for dirname in dirnames:
+                    entry_rel = f"{prefix}{dirname}"
+                    if dirname.lower() in names and not dockerignore.ignored(entry_rel, ignore_rules):
+                        return True
+                    if not dockerignore.pruned(entry_rel, ignore_rules):
+                        kept.append(dirname)
+                dirnames[:] = kept
         # Not knowing whether dest is a folder in the image, either name may be the one the file gets.
         elif any(posixpath.basename(name).lower() in names for name in (rel, copy.dest)):
             return True
@@ -3232,7 +3279,11 @@ def _dockerfile_requirements(
                 "folder first, so it may run another pip"
             )
         uv = install.uv
-        if uv and (config := next((copy for copy in copies if _copies_config(copy, _UV_CONFIG_NAMES)), None)):
+        if uv and (
+            config := next(
+                (copy for copy in copies if _copies_config(copy, _UV_CONFIG_NAMES, context, ignore_rules)), None
+            )
+        ):
             if config.foreign is not None:
                 raise DockerfileError(
                     f"line {config.line}: COPY --from={config.foreign} may bring a uv.toml or pyproject.toml, which "
@@ -3357,7 +3408,7 @@ def _dockerfile_requirements(
                 _add_dir(dirs, workdir)
         elif keyword == "COPY":
             copies.append(copy := _read_copy(number, args, workdir, dirs, context, context_label, ignore_rules))
-            if _copies_config(copy, _PIP_CONFIG_NAMES) or (
+            if _copies_config(copy, _PIP_CONFIG_NAMES, context, ignore_rules) or (
                 copy.foreign is not None and _within(copy.dest, reader.config_dirs)
             ):
                 run_error = f"line {number}: a pip config file may change what pip installs"
