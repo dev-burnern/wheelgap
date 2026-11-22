@@ -104,8 +104,8 @@ def parse(data: object) -> list[GapWheel] | None:
 def look_up_cached() -> tuple[list[GapWheel] | None, float | None]:
     """The cached gap wheel list and the time it was saved (seconds since the epoch), or (None, None): not cached,
     older than cache.GAP_WHEELS_MAX_AGE, unreadable, or without a usable entry. It never makes a request.
-    cli.gap_wheel_fills (--fix) uses it only when it fills a gap, and otherwise calls fetch(); the "Run with --fix"
-    hint of a run without --fix reads only this."""
+    cli.gap_wheel_fills (--fix) uses it when it fills a gap or was saved less than cache.GAP_WHEELS_RECHECK_AGE ago,
+    and otherwise calls fetch(); the "Run with --fix" hint of a run without --fix reads only this."""
     cached, saved = cache.load_gap_wheels_with_time(pypi.GAP_WHEELS_URL)
     if cached is not None and saved is not None:
         wheels = parse(cached)

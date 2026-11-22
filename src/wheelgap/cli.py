@@ -1937,9 +1937,10 @@ def gap_wheel_fills(
 ) -> list[gapwheels.Fill]:
     """--fix: the gap cells a wheel on wheelgap's gap wheel index fills. The list is read in one request that names no
     package, only when a gap of a package that is positively PyPI's could use it (gapwheels.eligible), and never when
-    packages come from another index. A cached list (cache.GAP_WHEELS_MAX_AGE) answers only when it fills at least one
-    of this run's gaps: before saying none fits, the list is fetched once more, since new wheels are published most
-    days. Notes on stderr say when it wasn't read, couldn't be (or couldn't be refreshed), or nothing fits."""
+    packages come from another index. A cached list (cache.GAP_WHEELS_MAX_AGE) answers when it fills at least one of
+    this run's gaps, or when it fills none and was saved less than cache.GAP_WHEELS_RECHECK_AGE ago; otherwise the list
+    is fetched once more before saying none fits, since new wheels are published most days. Notes on stderr say when
+    it wasn't read, couldn't be (or couldn't be refreshed), or that nothing on the list fetched at a given time fits."""
     other = origin.other_index(index_url)
     if other is not None:
         if not quiet:

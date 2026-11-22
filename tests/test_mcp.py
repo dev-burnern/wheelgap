@@ -1318,6 +1318,10 @@ def test_check_lockfile_fix_refreshes_a_cached_list_that_fills_nothing(fake_pypi
 
 def test_check_lockfile_quiet_config_keeps_notes(fake_pypi, gap_wheels, tmp_path, monkeypatch):
     # A project that sets quiet = true for its own terminal runs must not lose the MCP notes.
+    from wheelgap import cache
+
+    # The no-fill note names the minute the list was fetched: a clock that moves on could split the two runs.
+    monkeypatch.setattr(cache, "_now", lambda: 1_700_000_000.0)
     path = nowheels_requirements(tmp_path)
     (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nquiet = true\n", encoding="utf-8")
 
@@ -1356,7 +1360,11 @@ def test_check_lockfile_quiet_config_keeps_notes(fake_pypi, gap_wheels, tmp_path
     assert check(fix=True, **FT_WIN_ARM)["notes"] == quiet["notes"]
 
 
-def test_check_dockerfile_quiet_config_keeps_notes(fake_pypi, gap_wheels, tmp_path):
+def test_check_dockerfile_quiet_config_keeps_notes(fake_pypi, gap_wheels, tmp_path, monkeypatch):
+    from wheelgap import cache
+
+    # The no-fill note names the minute the list was fetched: a clock that moves on could split the two runs.
+    monkeypatch.setattr(cache, "_now", lambda: 1_700_000_000.0)
     (tmp_path / "Dockerfile").write_text("FROM python:3.13-alpine\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nquiet = true\n", encoding="utf-8")
     arguments = {"dockerfile": str(tmp_path / "Dockerfile"), "path": nowheels_requirements(tmp_path)}
