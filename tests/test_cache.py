@@ -622,8 +622,11 @@ def test_gap_wheels_cache_age_limit(monkeypatch):
     assert cache.load_gap_wheels(pypi.GAP_WHEELS_URL) == doc
 
     # At 59 minutes (within GAP_WHEELS_MAX_AGE = 3600):
+    saved_at = now
     now += cache.GAP_WHEELS_MAX_AGE - 60
     assert cache.load_gap_wheels(pypi.GAP_WHEELS_URL) == doc
+    assert cache.load_gap_wheels_with_time(pypi.GAP_WHEELS_URL) == (doc, saved_at)
+    assert cache.GAP_WHEELS_RECHECK_AGE == 5 * 60
 
     # At 60 minutes + 1 second: expired!
     now += 61

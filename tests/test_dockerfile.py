@@ -1251,6 +1251,94 @@ def test_dockerfile_requirements_dockerignore_matching(tmp_path, rules, excluded
         assert dockerfile_requirements(path) == [(4, requirements)]
 
 
+def test_dockerfile_requirements_dockerignore_skips_ignored_pip_config(tmp_path, capsys, fake_pypi):
+    path = _context(tmp_path, "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\n")
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (tmp_path / "ci").mkdir()
+    (tmp_path / "ci" / "pip.conf").write_text(
+        "[global]\nindex-url = https://example.invalid/simple\n", encoding="utf-8"
+    )
+
+    # Without .dockerignore, ci/pip.conf enters the image and refuses the project.
+    with pytest.raises(
+        DockerfileError,
+        match=rf"^{re.escape(str(path))}:3: a pip config file may change what pip installs$",
+    ):
+        dockerfile_requirements(path)
+
+    # With ci ignored, COPY . . never brings ci/pip.conf and the CLI checks requirements.txt.
+    (tmp_path / ".dockerignore").write_text("ci\n", encoding="utf-8")
+    assert dockerfile_requirements(path) == [(4, tmp_path / "requirements.txt")]
+    assert main(["--dockerfile", str(path), "--dockerfile-inputs", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert "purewheel" in out
+    assert "3.1" in out
+
+    # Ignoring by glob also skips ci/pip.conf.
+    (tmp_path / ".dockerignore").write_text("**/pip.conf\n", encoding="utf-8")
+    assert dockerfile_requirements(path) == [(4, tmp_path / "requirements.txt")]
+
+    # Re-including ci/pip.conf with a `!` exception refuses the project again.
+    (tmp_path / ".dockerignore").write_text("ci\n!ci/pip.conf\n", encoding="utf-8")
+    with pytest.raises(
+        DockerfileError,
+        match=rf"^{re.escape(str(path))}:3: a pip config file may change what pip installs$",
+    ):
+        dockerfile_requirements(path)
+
+
+@pytest.mark.parametrize("config_name", ["pyproject.toml", "uv.toml"])
+def test_dockerfile_requirements_dockerignore_skips_ignored_uv_config(tmp_path, config_name):
+    path = _context(
+        tmp_path,
+        "FROM python:3.13\nWORKDIR /app\nCOPY . .\nRUN uv pip install --system -r requirements.txt\n",
+        ["requirements.txt"],
+    )
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (tmp_path / config_name).write_text("", encoding="utf-8")
+
+    with pytest.raises(
+        DockerfileError,
+        match=rf"^{re.escape(str(path))}:3: this COPY puts a uv\.toml or pyproject\.toml in the image",
+    ):
+        dockerfile_requirements(path, uv_installs=set())
+
+    (tmp_path / ".dockerignore").write_text(f"{config_name}\n", encoding="utf-8")
+    assert dockerfile_requirements(path, uv_installs=set()) == [(4, tmp_path / "requirements.txt")]
+
+
+def test_dockerfile_requirements_dockerignore_rejects_wholly_ignored_copy_folder(tmp_path):
+    path = _context(
+        tmp_path,
+        "FROM python:3.13-slim\n"
+        "WORKDIR /app\n"
+        "COPY deps/ /deps/\n"
+        "COPY requirements.txt .\n"
+        "RUN pip install -r requirements.txt\n",
+        ["requirements.txt"],
+    )
+    (tmp_path / "deps").mkdir()
+    (tmp_path / "deps" / "keep.txt").write_text("ok\n", encoding="utf-8")
+
+    # Not ignored: read.
+    assert dockerfile_requirements(path) == [(5, tmp_path / "requirements.txt")]
+
+    # Wholly ignored: refused at the COPY line naming the rule.
+    (tmp_path / ".dockerignore").write_text("deps\n", encoding="utf-8")
+    with pytest.raises(
+        DockerfileError,
+        match=(
+            rf"^{re.escape(str(path))}:3: COPY deps/: "
+            r"excluded from the build context by \.dockerignore:1 \('deps'\)$"
+        ),
+    ):
+        dockerfile_requirements(path)
+
+    # Ignored with an exception that re-includes a file under it: read.
+    (tmp_path / ".dockerignore").write_text("deps\n!deps/keep.txt\n", encoding="utf-8")
+    assert dockerfile_requirements(path) == [(5, tmp_path / "requirements.txt")]
+
+
 @pytest.mark.parametrize(
     "pattern",
     [
@@ -4423,6 +4511,53 @@ def test_dockerfile_requirements_reads_only_plain_runs_on_a_windows_image(tmp_pa
         dockerfile_requirements(path)
     path = _context(tmp_path, head + "RUN pip install -r requirements.txt\n")
     assert dockerfile_requirements(path)
+
+
+@pytest.mark.parametrize("filename", ["requirements.pip", "deps.py", "pylock.a.b.toml", "deps"])
+def test_cli_dockerfile_inputs_reads_pip_requirements_under_any_filename(tmp_path, capsys, fake_pypi, filename):
+    (tmp_path / filename).write_text("purewheel==3.1\nnowheels==0.9\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        f"FROM python:3.13-slim\nWORKDIR /app\nCOPY {filename} .\nRUN pip install -r {filename}\n",
+        encoding="utf-8",
+    )
+    assert main(["--dockerfile", str(dockerfile), "--dockerfile-inputs", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert sorted((p["name"], p["version"]) for p in data["packages"]) == [
+        ("nowheels", "0.9"),
+        ("purewheel", "3.1"),
+    ]
+
+
+@pytest.mark.parametrize("filename", ["pylock.toml", "pylock.dev.toml"])
+def test_cli_dockerfile_inputs_reads_a_pip_lines_pylock_as_a_lock(tmp_path, capsys, fake_pypi, fixtures, filename):
+    # pip 26.1 and later install `pip install -r pylock.toml` (or pylock.NAME.toml) as a PEP 751 lock.
+    (tmp_path / filename).write_bytes((fixtures / "pylockproj" / "pylock.toml").read_bytes())
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        f"FROM python:3.13-slim\nWORKDIR /app\nCOPY {filename} .\nRUN pip install -r {filename}\n", encoding="utf-8"
+    )
+    main(["--dockerfile", str(dockerfile), "--dockerfile-inputs", "--json"])
+    assert "fastlib" in {p["name"] for p in json.loads(capsys.readouterr().out)["packages"]}
+
+
+def test_cli_dockerfile_inputs_uv_still_refuses_non_requirements_filename_and_cli_keeps_script_reader(
+    tmp_path, capsys, fake_pypi
+):
+    (tmp_path / "deps.py").write_text("purewheel==3.1\nnowheels==0.9\n", encoding="utf-8")
+    uv_dockerfile = tmp_path / "Dockerfile"
+    uv_dockerfile.write_text(
+        "FROM python:3.13-slim\nWORKDIR /app\nCOPY --from=ghcr.io/astral-sh/uv:0.9.1 /uv /bin/\n"
+        "COPY deps.py .\nRUN uv pip install --system -r deps.py\n",
+        encoding="utf-8",
+    )
+    assert main(["--dockerfile", str(uv_dockerfile), "--dockerfile-inputs"]) == 2
+    uv_err = capsys.readouterr().err
+    assert "uv pip install -r deps.py: uv reads a file by its name" in uv_err
+
+    assert main([str(tmp_path / "deps.py")]) == 2
+    cli_err = capsys.readouterr().err
+    assert "no # /// script block" in cli_err
 
 
 def test_github_annotations_with_dockerfile_inputs_names_top_file_when_included(

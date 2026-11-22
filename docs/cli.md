@@ -86,8 +86,11 @@ stages before it, since it may name one of them: pass its value with [`--build-a
 
 `--dockerfile-inputs` (with `--dockerfile`, and no `INPUT`): check the requirements files the Dockerfile's final stage
 installs with `RUN pip install -r FILE`, on the image's Python and platform, so "will this image build without
-compiling anything?" is one command (add `--deps` for what they pull in). `FILE` is followed back through `WORKDIR` and
-`COPY` to a file in the build context, taken to be the Dockerfile's folder unless
+compiling anything?" is one command (add `--deps` for what they pull in). After 0.13.0, the file of a `pip install -r`
+line is read as a requirements file whatever its name (`requirements.pip`, `deps.py`, no extension), as pip reads it,
+except that a `pylock.toml` or `pylock.NAME.toml` is read as a lock, as pip 26.1 and later install it (a `uv pip install -r` line still takes only a `.txt` or `.in` file, since uv reads other names its own
+way). `FILE` is followed back through `WORKDIR` and `COPY` to a file in the build context, taken to be the
+Dockerfile's folder unless
 [`--dockerfile-context DIR`](#dockerfile-context) names another, and each one gets a note on stderr
 (`Dockerfile:4: RUN pip install -r reads requirements.txt`). After 0.13.0 the report says it too: in the header
 (`requirements.txt (Dockerfile:4)`), in `--json`'s [`dockerfile_inputs`](output.md#json) and in each
@@ -250,7 +253,9 @@ A `.dockerignore` is read as BuildKit reads it (**after 0.13.0**; 0.13.0 refuses
 build context. A requirements or constraints file that the rules leave out of the context, or a file one of them
 includes with `-r` or `-c`, is an error naming its `COPY` line and the rule: the image doesn't have it, so the build
 would fail there, and wheelgap doesn't read it from disk. That holds for a file a folder `COPY` (`COPY . .`) would
-have brought, and for one a `COPY` names itself, which Docker then doesn't find. When the ignore file has rules, a
+have brought, for a file or wholly ignored folder a `COPY` names itself (which Docker then doesn't find), and for
+config files (`pip.conf`, `pyproject.toml`, `uv.toml`): an ignored config file never enters the image and doesn't
+refuse the project. When the ignore file has rules, a
 requirements file that is a symlink, or is reached through a symlinked folder, isn't read either: the rules may leave
 out what the link points to, and the link then dangles in the image. A pattern wheelgap can't read exactly as Docker
 does is an error naming the ignore file's line: one Docker rejects, a `\` escape before a letter or digit, any `\` on
@@ -582,9 +587,10 @@ uv.lock input, the same entries for the `# /// script` block of a script (or of 
 (and not `--ignore`d), the package passes [the PyPI-origin rule](how-it-works.md#pypi-origin), and the index has a
 wheel of exactly that version whose tags the target accepts. It reads the index's list from wheelgap.github.io in one
 request that names no package, and only when a gap could use it. A list it could read is kept in the 1-hour
-[cache](how-it-works.md#cache) (`--no-cache` neither reads nor saves it, and `--online` reads it again). Before saying
-no wheel on the index fills these gaps from a cached list, wheelgap fetches the list once and looks again; if that fetch
-fails, it answers from the cached list and notes the time it was fetched. It never
+[cache](how-it-works.md#cache) (`--no-cache` neither reads nor saves it, and `--online` reads it again). When a cached
+list fills none of the run's gaps, wheelgap answers from it if it was fetched less than 5 minutes ago and refreshes it
+once it is older; if that refresh fails, it answers from the cached list and notes that it couldn't be refreshed. The
+empty-fill note always names the UTC time the list was fetched. It never
 changes a status, the summary or the exit code: wheelgap still reports what PyPI has. `--offline` refuses the flag
 with an error; with `--index-url`, `index-url` in `[tool.wheelgap]` or a `WHEELGAP_INDEX_URL` mirror it's off and
 reads nothing. If the list can't be read, a note on stderr says so. With `--json` it adds

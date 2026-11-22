@@ -20,8 +20,11 @@ too.
 
 ## Tools
 
-All eight are read-only. Package checks look packages up on PyPI, or on the index in
-`WHEELGAP_INDEX_URL`; `list_targets` and `suggest_targets` contact nothing. Like wheelgap the server needs nothing beyond
+All eight are read-only. Package checks look packages up on PyPI, or on a mirror of PyPI's JSON API set with
+`WHEELGAP_INDEX_URL` in the server's environment (not a `/simple` URL). The tools that check a project's files also
+read `index-url` in `[tool.wheelgap]`, a simple index whose URL has no credentials (see
+[private indexes](how-it-works.md#private-indexes)); an index that needs credentials is for `wheelgap --index-url` on
+the command line. `list_targets` and `suggest_targets` contact nothing. Like wheelgap the server needs nothing beyond
 `packaging`.
 
 - `check_package`: one package, the latest release or a given version, on each

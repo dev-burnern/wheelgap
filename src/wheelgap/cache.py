@@ -25,6 +25,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 MAX_AGE = 24 * 60 * 60  # seconds: new wheels for an existing release show up within a day
 GAP_WHEELS_MAX_AGE = 60 * 60  # seconds: new gap wheels are published often, but an hour avoids CI stampedes
+GAP_WHEELS_RECHECK_AGE = 5 * 60  # seconds: don't re-fetch an empty-fill cached list fetched minutes ago
 PRUNE_EVERY = 24 * 60 * 60  # seconds between two prunes of expired entries
 # The only files prune() and clear() ever delete: entries (_path's names) and leftovers of an interrupted save.
 _ENTRY = re.compile(r"[0-9a-f]{64}\.json", re.ASCII)

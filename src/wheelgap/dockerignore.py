@@ -119,6 +119,18 @@ def ignored(path: str, rules: tuple[Rule, ...]) -> str | None:
     return ignored_by
 
 
+def pruned(path: str, rules: tuple[Rule, ...]) -> str | None:
+    """Return the rule that excludes a folder when no exception rule can re-include anything under it."""
+    if not (rule := ignored(path, rules)):
+        return None
+    prefixes = [r.prefix + "/" for r in rules if r.include]
+    if all(_PRUNE_CHARS.isdisjoint(prefix) for prefix in prefixes) and not any(
+        prefix.startswith(path + "/") for prefix in prefixes
+    ):
+        return rule
+    return None
+
+
 _Token = Literal["*", "**", "**/", "^"] | re.Pattern[str]
 
 
