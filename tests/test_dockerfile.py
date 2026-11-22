@@ -4453,11 +4453,13 @@ def test_cli_dockerfile_inputs_uv_still_refuses_non_requirements_filename_and_cl
     )
     assert main(["--dockerfile", str(uv_dockerfile), "--dockerfile-inputs"]) == 2
     uv_err = capsys.readouterr().err
-    assert "deps.py" in uv_err
+    assert "uv pip install -r deps.py: uv reads a file by its name" in uv_err
 
     assert main([str(tmp_path / "deps.py")]) == 2
     cli_err = capsys.readouterr().err
     assert "no # /// script block" in cli_err
+
+
 def test_exact_case_path_matches_only_exact_component_names(tmp_path):
     from wheelgap.dockerfile import _exact_case_path
 
