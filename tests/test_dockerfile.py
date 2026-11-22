@@ -1251,6 +1251,94 @@ def test_dockerfile_requirements_dockerignore_matching(tmp_path, rules, excluded
         assert dockerfile_requirements(path) == [(4, requirements)]
 
 
+def test_dockerfile_requirements_dockerignore_skips_ignored_pip_config(tmp_path, capsys, fake_pypi):
+    path = _context(tmp_path, "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\n")
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (tmp_path / "ci").mkdir()
+    (tmp_path / "ci" / "pip.conf").write_text(
+        "[global]\nindex-url = https://example.invalid/simple\n", encoding="utf-8"
+    )
+
+    # Without .dockerignore, ci/pip.conf enters the image and refuses the project.
+    with pytest.raises(
+        DockerfileError,
+        match=rf"^{re.escape(str(path))}:3: a pip config file may change what pip installs$",
+    ):
+        dockerfile_requirements(path)
+
+    # With ci ignored, COPY . . never brings ci/pip.conf and the CLI checks requirements.txt.
+    (tmp_path / ".dockerignore").write_text("ci\n", encoding="utf-8")
+    assert dockerfile_requirements(path) == [(4, tmp_path / "requirements.txt")]
+    assert main(["--dockerfile", str(path), "--dockerfile-inputs", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert "purewheel" in out
+    assert "3.1" in out
+
+    # Ignoring by glob also skips ci/pip.conf.
+    (tmp_path / ".dockerignore").write_text("**/pip.conf\n", encoding="utf-8")
+    assert dockerfile_requirements(path) == [(4, tmp_path / "requirements.txt")]
+
+    # Re-including ci/pip.conf with a `!` exception refuses the project again.
+    (tmp_path / ".dockerignore").write_text("ci\n!ci/pip.conf\n", encoding="utf-8")
+    with pytest.raises(
+        DockerfileError,
+        match=rf"^{re.escape(str(path))}:3: a pip config file may change what pip installs$",
+    ):
+        dockerfile_requirements(path)
+
+
+@pytest.mark.parametrize("config_name", ["pyproject.toml", "uv.toml"])
+def test_dockerfile_requirements_dockerignore_skips_ignored_uv_config(tmp_path, config_name):
+    path = _context(
+        tmp_path,
+        "FROM python:3.13\nWORKDIR /app\nCOPY . .\nRUN uv pip install --system -r requirements.txt\n",
+        ["requirements.txt"],
+    )
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (tmp_path / config_name).write_text("", encoding="utf-8")
+
+    with pytest.raises(
+        DockerfileError,
+        match=rf"^{re.escape(str(path))}:3: this COPY puts a uv\.toml or pyproject\.toml in the image",
+    ):
+        dockerfile_requirements(path, uv_installs=set())
+
+    (tmp_path / ".dockerignore").write_text(f"{config_name}\n", encoding="utf-8")
+    assert dockerfile_requirements(path, uv_installs=set()) == [(4, tmp_path / "requirements.txt")]
+
+
+def test_dockerfile_requirements_dockerignore_rejects_wholly_ignored_copy_folder(tmp_path):
+    path = _context(
+        tmp_path,
+        "FROM python:3.13-slim\n"
+        "WORKDIR /app\n"
+        "COPY deps/ /deps/\n"
+        "COPY requirements.txt .\n"
+        "RUN pip install -r requirements.txt\n",
+        ["requirements.txt"],
+    )
+    (tmp_path / "deps").mkdir()
+    (tmp_path / "deps" / "keep.txt").write_text("ok\n", encoding="utf-8")
+
+    # Not ignored: read.
+    assert dockerfile_requirements(path) == [(5, tmp_path / "requirements.txt")]
+
+    # Wholly ignored: refused at the COPY line naming the rule.
+    (tmp_path / ".dockerignore").write_text("deps\n", encoding="utf-8")
+    with pytest.raises(
+        DockerfileError,
+        match=(
+            rf"^{re.escape(str(path))}:3: COPY deps/: "
+            r"excluded from the build context by \.dockerignore:1 \('deps'\)$"
+        ),
+    ):
+        dockerfile_requirements(path)
+
+    # Ignored with an exception that re-includes a file under it: read.
+    (tmp_path / ".dockerignore").write_text("deps\n!deps/keep.txt\n", encoding="utf-8")
+    assert dockerfile_requirements(path) == [(5, tmp_path / "requirements.txt")]
+
+
 @pytest.mark.parametrize(
     "pattern",
     [
