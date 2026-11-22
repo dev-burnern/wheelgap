@@ -1082,6 +1082,40 @@ def _add_dir(dirs: set[str], folder: str) -> None:
         folder = posixpath.dirname(folder)
 
 
+def _exact_case_path(base: Path, rel: str) -> tuple[Path | None, str | None]:
+    """Resolve `rel` under `base` matching each path component's exact case via `os.listdir()`.
+
+    Returns `(path, None)` when every component matches an entry's exact name, `(None, actual_rel)` when a path
+    differs only in case, or `(None, None)` when no entry matches.
+    """
+    if rel in ("", "."):
+        return (base, None) if base.exists() else (None, None)
+    current = base
+    actual_parts: list[str] = []
+    case_differs = False
+    for part in rel.split("/"):
+        if part in ("", "."):
+            continue
+        try:
+            entries = os.listdir(current)
+        except OSError:
+            return None, None
+        if part in entries:
+            current = current / part
+            actual_parts.append(part)
+            continue
+        folded = part.casefold()
+        match = next((entry for entry in sorted(entries) if entry.casefold() == folded), None)
+        if match is None:
+            return None, None
+        case_differs = True
+        current = current / match
+        actual_parts.append(match)
+    if case_differs:
+        return None, "/".join(actual_parts)
+    return current, None
+
+
 def _read_copy(
     number: int,
     args: str,
@@ -1136,6 +1170,14 @@ def _read_copy(
         host = context / rel
         if not host.exists():
             return unread(f"COPY {name}: not found in the build context ({context_label})")
+        exact, actual = _exact_case_path(context, rel)
+        if exact is None:
+            if actual is not None:
+                return unread(
+                    f"COPY {name}: not found in the build context "
+                    f"(it has {actual}, and a Linux image build tells the two apart)"
+                )
+            return unread(f"COPY {name}: not found in the build context ({context_label})")
         if not host.resolve().is_relative_to(root):
             return unread(f"COPY {name}: a symlink out of the build context isn't read by --dockerfile-inputs")
         # A link is matched against the ignore rules by its own name, and what it points to by its: the rules may
@@ -1178,7 +1220,9 @@ def _copied_file(copy: _Copy, target: str, context: Path, ignore_rules: tuple[do
                     f"end the destination with / (or set WORKDIR {copy.dest} first)"
                 )
         elif target.startswith(copy.dest.rstrip("/") + "/"):
-            found = host / posixpath.relpath(target, copy.dest)
+            found, _ = _exact_case_path(host, posixpath.relpath(target, copy.dest))
+            if found is None:
+                continue
             if os.path.lexists(found) and (found.is_symlink() or not found.resolve().is_relative_to(root)):
                 raise DockerfileError(
                     f"line {copy.line}: {found.relative_to(context)} is a symlink, "

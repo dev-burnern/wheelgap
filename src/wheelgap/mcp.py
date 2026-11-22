@@ -736,7 +736,7 @@ def _check_package(args: dict[str, Any]) -> dict[str, Any]:
             result = check_package(name, version, targets, pyodide_locks=locks)
             asked = [result]
     except (PyodideLockError, SourceError) as e:  # a lock for a Python no pyodide target uses; an unsettled tree
-        raise ToolError(str(e)) from e
+        raise ToolError(_translate_cli_message(str(e).removeprefix("--deps: "))) from e
     out: dict[str, Any] = result.to_dict(explain=explain)
     if explain:
         _cap_rejected(out)
@@ -946,8 +946,8 @@ def _diff_lockfiles(args: dict[str, Any]) -> dict[str, Any]:
             results, source, _ = check_with_source(path, targets, online=False, offline=False)
         except OSError as e:  # a lockfile that can't be read
             raise ToolError(f"{path}: {e.strerror or e}") from e
-        except SourceError:
-            raise
+        except SourceError as e:
+            raise ToolError(_translate_cli_message(str(e))) from e
         except ValueError as e:  # malformed TOML or JSON, not UTF-8: the file's problem, not a bug here
             raise ToolError(f"{path}: {type(e).__name__}: {e}") from e
         packages = diff.merge(results, targets)
@@ -1039,6 +1039,25 @@ _CLI_ADVICE = {
     "pass -p/-t instead": "use check_lockfile with python and targets instead",
     "pass -t and --glibc instead": "use check_lockfile with targets and glibc instead",
     "pass --build-arg if the build sets one": "pass build_args if the build supplies a value",
+    "check a lockfile instead (uv lock, or pip-compile)": (
+        "make a lockfile (uv lock, or pip-compile) and call check_lockfile on it"
+    ),
+    # check_package's dependency tree past deps.MAX_PACKAGES.
+    "packages; check a lockfile instead": "packages; make a lockfile and call check_lockfile on it",
+    (
+        "so check_lockfile() and wheelgap.diff don't read it; pass a lockfile "
+        "(the wheelgap command checks a pyproject.toml)"
+    ): (
+        "so diff_lockfiles doesn't read it; pass lockfiles or requirements files "
+        "(check_lockfile checks a pyproject.toml)"
+    ),
+    (
+        "so check_lockfile() and wheelgap.diff don't read it; pass a lockfile "
+        "(the wheelgap command checks a script's # /// script block)"
+    ): (
+        "so diff_lockfiles doesn't read it; pass lockfiles or requirements files "
+        "(check_lockfile checks a script's # /// script block)"
+    ),
     # A uv.lock checked with offline: false. The tools have no text report, and return pip_refuses with a gap only.
     "(the text report's --explain says which, and --json lists the files in pip_refuses)": (
         "(a package with a gap lists the files in its pip_refuses)"
@@ -1667,7 +1686,11 @@ class Server:
                 data["notes"] = [*data.get("notes", []), *notes]
             text = json.dumps(data, indent=1)
         except (ToolError, TargetError, SourceError) as e:
-            text = str(e)
+            text = (
+                str(e)
+                if isinstance(e, ToolError)
+                else _translate_cli_message(str(e), lockfile=name == "check_lockfile")
+            )
             if notes:
                 text += "\n\n" + "\n".join(notes)
             return {"content": [{"type": "text", "text": text}], "isError": True}

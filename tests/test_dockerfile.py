@@ -4423,3 +4423,84 @@ def test_dockerfile_requirements_reads_only_plain_runs_on_a_windows_image(tmp_pa
         dockerfile_requirements(path)
     path = _context(tmp_path, head + "RUN pip install -r requirements.txt\n")
     assert dockerfile_requirements(path)
+
+
+def test_exact_case_path_matches_only_exact_component_names(tmp_path):
+    from wheelgap.dockerfile import _exact_case_path
+
+    (tmp_path / "requirements.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    reqs_dir = tmp_path / "reqs"
+    reqs_dir.mkdir()
+    (reqs_dir / "base.txt").write_text("six==1.16.0\n", encoding="utf-8")
+
+    assert _exact_case_path(tmp_path, "requirements.txt") == (tmp_path / "requirements.txt", None)
+    assert _exact_case_path(tmp_path, "reqs/base.txt") == (reqs_dir / "base.txt", None)
+    assert _exact_case_path(tmp_path, "Requirements.txt") == (None, "requirements.txt")
+    assert _exact_case_path(tmp_path, "Reqs/base.txt") == (None, "reqs/base.txt")
+    assert _exact_case_path(tmp_path, "missing.txt") == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("dockerfile_body", "error_pattern", "case_hint"),
+    [
+        (
+            "FROM python:3.13-slim\nWORKDIR /app\nCOPY Requirements.txt .\nRUN pip install -r Requirements.txt\n",
+            "COPY Requirements.txt: not found in the build context",
+            "it has requirements.txt, and a Linux image build tells the two apart",
+        ),
+        (
+            "FROM python:3.13-slim\nWORKDIR /app\nCOPY Reqs/base.txt .\nRUN pip install -r base.txt\n",
+            "COPY Reqs/base.txt: not found in the build context",
+            "it has reqs/base.txt, and a Linux image build tells the two apart",
+        ),
+        (
+            "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r Requirements.txt\n",
+            "/app/Requirements.txt isn't copied from the build context",
+            None,
+        ),
+    ],
+)
+def test_dockerfile_requirements_rejects_case_mismatched_copy_paths(
+    tmp_path, dockerfile_body, error_pattern, case_hint
+):
+    (tmp_path / "requirements.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    reqs_dir = tmp_path / "reqs"
+    reqs_dir.mkdir()
+    (reqs_dir / "base.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(dockerfile_body, encoding="utf-8")
+
+    with pytest.raises(DockerfileError, match=re.escape(error_pattern)) as raised:
+        dockerfile_requirements(dockerfile)
+    # Only a host that ignores case finds the file under the other name, and says which name the context has.
+    if case_hint is not None and (tmp_path / "REQUIREMENTS.TXT").exists():
+        assert case_hint in str(raised.value)
+
+
+def test_dockerfile_requirements_rejects_case_mismatched_include_under_folder_copy(tmp_path):
+    # An include reached through a folder COPY: on a host that ignores case, Base.txt used to be read as base.txt.
+    (tmp_path / "requirements.txt").write_text("-r Base.txt\n", encoding="utf-8")
+    (tmp_path / "base.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\n", encoding="utf-8"
+    )
+
+    with pytest.raises(DockerfileError, match=re.escape("/app/Base.txt isn't copied from the build context")):
+        dockerfile_requirements(dockerfile)
+
+
+def test_dockerfile_requirements_reads_exact_case_copy_paths(tmp_path):
+    (tmp_path / "requirements.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    reqs_dir = tmp_path / "reqs"
+    reqs_dir.mkdir()
+    (reqs_dir / "base.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.13-slim\nWORKDIR /app\nCOPY requirements.txt .\nCOPY reqs/base.txt .\n"
+        "RUN pip install -r requirements.txt -r base.txt\n",
+        encoding="utf-8",
+    )
+
+    inputs = dockerfile_requirements(dockerfile)
+    assert [req_path.name for _, req_path in inputs] == ["requirements.txt", "base.txt"]
