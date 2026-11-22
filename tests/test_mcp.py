@@ -846,6 +846,11 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
             True,
             None,
         ),
+        (
+            "more than 2000 packages; check a lockfile instead",
+            False,
+            "more than 2000 packages; make a lockfile and call check_lockfile on it",
+        ),
         ("/srv/--fix/uv.lock: no such file or directory", True, None),
         ("C:\\srv\\--deps\\uv.lock: invalid TOML", True, None),
     ],
@@ -3505,3 +3510,71 @@ def test_check_dockerfile_description_says_where_unseen_lines_are():
 
     [tool] = [tool for tool in TOOLS if tool["name"] == "check_dockerfile"]
     assert "'dockerfile_warnings'" in tool["description"] and "summary.complete false" in tool["description"]
+
+
+@pytest.mark.usefixtures("index")
+def test_check_package_dependencies_conflict_translates_cli_advice(monkeypatch):
+    import test_deps
+
+    monkeypatch.setitem(test_deps.INDEX, "conflictroot", {"1.0": test_deps.release(requires=("x", "y"))})
+    (_, reply) = run(
+        init(),
+        call(
+            "check_package",
+            name="conflictroot",
+            version="1.0",
+            python="3.14",
+            targets=["win-arm64"],
+            dependencies=True,
+        ),
+    )
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert "--deps" not in text
+    assert "call check_lockfile on it" in text
+
+
+def test_diff_lockfiles_pyproject_error_uses_mcp_tool_names(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = ["six==1.16.0"]\n', encoding="utf-8"
+    )
+    reqs = tmp_path / "requirements.txt"
+    reqs.write_text("six==1.16.0\n", encoding="utf-8")
+    (_, reply) = run(init(), call("diff_lockfiles", old=str(pyproject), new=str(reqs)))
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert "check_lockfile()" not in text
+    assert "the wheelgap command" not in text
+    assert "so diff_lockfiles doesn't read it" in text
+    assert "check_lockfile checks a pyproject.toml" in text
+
+
+def test_diff_lockfiles_script_error_uses_mcp_tool_names(tmp_path):
+    script = tmp_path / "tool.py"
+    script.write_text('# /// script\n# dependencies = ["six==1.16.0"]\n# ///\nimport six\n', encoding="utf-8")
+    reqs = tmp_path / "requirements.txt"
+    reqs.write_text("six==1.16.0\n", encoding="utf-8")
+    (_, reply) = run(init(), call("diff_lockfiles", old=str(script), new=str(reqs)))
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert "check_lockfile()" not in text
+    assert "the wheelgap command" not in text
+    assert "so diff_lockfiles doesn't read it" in text
+    assert "check_lockfile checks a script's # /// script block" in text
+
+
+def test_tool_result_translates_source_error_reaching_it_directly(monkeypatch):
+    from wheelgap.mcp import _HANDLERS
+    from wheelgap.sources import SourceError
+
+    def boom(_args):
+        raise SourceError("cached metadata missing; pass --online for this run")
+
+    monkeypatch.setitem(_HANDLERS, "check_lockfile", boom)
+    (_, reply) = run(init(), call("check_lockfile", path="uv.lock"))
+    result = reply["result"]
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "--online" not in text
+    assert "call again with offline: false" in text
