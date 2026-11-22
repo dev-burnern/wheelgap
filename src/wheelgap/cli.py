@@ -1975,6 +1975,15 @@ def gap_wheel_fills(
                 fills = gapwheels.fillable(wanted, targets, source_of, cached_wheels, private, index_url)
                 if fills:
                     return fills
+                if saved_time is not None and cache._now() - saved_time < cache.GAP_WHEELS_RECHECK_AGE:
+                    if not quiet:
+                        time_str = datetime.datetime.fromtimestamp(saved_time, datetime.UTC).strftime("%H:%M UTC")
+                        print(
+                            f"wheelgap: note: --fix: no wheel on the gap wheel list fetched at {time_str} "
+                            "fills these gaps",
+                            file=sys.stderr,
+                        )
+                    return []
         live_wheels = gapwheels.fetch(write_cache=write_cache)
         if live_wheels is None:
             if cached_wheels is not None and saved_time is not None:
@@ -1992,7 +2001,11 @@ def gap_wheel_fills(
             return []
         fills = gapwheels.fillable(wanted, targets, source_of, live_wheels, private, index_url)
         if not fills and not quiet:
-            print("wheelgap: note: --fix: no wheel on the gap wheel index fills these gaps", file=sys.stderr)
+            time_str = datetime.datetime.fromtimestamp(cache._now(), datetime.UTC).strftime("%H:%M UTC")
+            print(
+                f"wheelgap: note: --fix: no wheel on the gap wheel list fetched at {time_str} fills these gaps",
+                file=sys.stderr,
+            )
     return fills
 
 

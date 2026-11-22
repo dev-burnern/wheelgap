@@ -18,7 +18,7 @@ INDEX = "https://wheelgap.github.io/wheels/simple/"
 DOWNLOAD = "https://github.com/wheelgap/wheels/releases/download/gap-wheels/"
 FT_WHEEL = "nowheels-0.9-cp314-cp314t-win_arm64.whl"
 NOWHEELS = ["nowheels==0.9", "-p", "3.14t", "-t", "win-arm64"]
-NOTHING_FITS = "wheelgap: note: --fix: no wheel on the gap wheel index fills these gaps"
+NOTHING_FITS = "wheelgap: note: --fix: no wheel on the gap wheel list fetched at "
 UNREADABLE = "wheelgap: note: couldn't read the gap wheel list, so --fix has no suggestions"
 FIX_HINT = "Run with --fix to see whether wheelgap's gap wheel index has a wheel for these."
 
@@ -773,17 +773,55 @@ def test_no_cache_does_not_save_the_gap_wheel_list(capsys, fake_pypi, gap_wheels
     assert gap_wheels.calls == 2  # but this one saved it
 
 
-def test_cached_list_without_wheel_and_live_list_with_it_fetches_once(capsys, fake_pypi, gap_wheels):
+def test_cached_list_without_wheel_and_live_list_with_it_fetches_once(capsys, fake_pypi, gap_wheels, monkeypatch):
+    from wheelgap import cache
+
+    now = 1_700_000_000.0  # 2023-11-14 22:13:20 UTC
+    monkeypatch.setattr(cache, "_now", lambda: now)
+
     gap_wheels.add("psycopg2", "2.9.11", "psycopg2-2.9.11-cp314-cp314t-win_arm64.whl")
     code, out, err = run(capsys, "psycopg2==2.9.11", "-p", "3.14t", "-t", "win-arm64", "--fix")
     assert gap_wheels.calls == 1
     assert "psycopg2 2.9.11: win-arm64" in out
 
+    # Past the 5-minute recheck window, an empty-fill cached list refreshes once.
+    now += cache.GAP_WHEELS_RECHECK_AGE + 60
     gap_wheels.add("nowheels", "0.9", FT_WHEEL)
     code, out, err = run(capsys, *NOWHEELS, "--fix")
     assert gap_wheels.calls == 2
     assert "nowheels 0.9: win-arm64" in out
     assert NOTHING_FITS not in err
+
+
+def test_cached_list_recheck_window_for_empty_fill(capsys, fake_pypi, gap_wheels, monkeypatch):
+    from wheelgap import cache
+
+    now = 1_700_000_000.0  # 2023-11-14 22:13:20 UTC
+    monkeypatch.setattr(cache, "_now", lambda: now)
+
+    gap_wheels.add("psycopg2", "2.9.11", "psycopg2-2.9.11-cp314-cp314t-win_arm64.whl")
+    _, _, err0 = run(capsys, *NOWHEELS, "--fix")
+    assert gap_wheels.calls == 1
+    assert "wheelgap: note: --fix: no wheel on the gap wheel list fetched at 22:13 UTC fills these gaps\n" in err0
+
+    # 1 minute old: answers from cached list without fetching.
+    now += 60
+    _, _, err1 = run(capsys, *NOWHEELS, "--fix")
+    assert gap_wheels.calls == 1
+    assert "wheelgap: note: --fix: no wheel on the gap wheel list fetched at 22:13 UTC fills these gaps\n" in err1
+
+    # --no-cache always fetches even within the 5-minute window.
+    _, _, err_nocache = run(capsys, *NOWHEELS, "--fix", "--no-cache")
+    assert gap_wheels.calls == 2
+    assert (
+        "wheelgap: note: --fix: no wheel on the gap wheel list fetched at 22:14 UTC fills these gaps\n" in err_nocache
+    )
+
+    # 6 minutes old (past GAP_WHEELS_RECHECK_AGE): fetches again and reports the fresh fetch time.
+    now += 5 * 60
+    _, _, err6 = run(capsys, *NOWHEELS, "--fix")
+    assert gap_wheels.calls == 3
+    assert "wheelgap: note: --fix: no wheel on the gap wheel list fetched at 22:19 UTC fills these gaps\n" in err6
 
 
 def test_cached_list_that_fills_the_gap_makes_no_fetch(capsys, fake_pypi, gap_wheels):
@@ -809,6 +847,7 @@ def test_cached_list_without_wheel_and_failing_fetch_notes_cached_time(capsys, f
     run(capsys, "psycopg2==2.9.11", "-p", "3.14t", "-t", "win-arm64", "--fix")
     assert gap_wheels.calls == 1
 
+    now += cache.GAP_WHEELS_RECHECK_AGE + 60
     gap_wheels.doc = urllib.error.URLError("temporary failure")
     code, out, err = run(capsys, *NOWHEELS, "--fix")
     assert gap_wheels.calls == 2
@@ -817,13 +856,12 @@ def test_cached_list_without_wheel_and_failing_fetch_notes_cached_time(capsys, f
         "the list couldn't be refreshed"
     )
     assert expected_note in err
-    assert NOTHING_FITS not in err
     assert UNREADABLE not in err
 
     # Even with -q, like the unreadable-list note: the index couldn't be asked, so this isn't "nothing fits".
     _, _, err_quiet = run(capsys, *NOWHEELS, "--fix", "-q")
     assert gap_wheels.calls == 3
-    assert expected_note in err_quiet and NOTHING_FITS not in err_quiet and UNREADABLE not in err_quiet
+    assert expected_note in err_quiet and UNREADABLE not in err_quiet
 
 
 def test_online_fetches_the_list_even_when_the_cached_one_fills_the_gap(capsys, fake_pypi, gap_wheels):
