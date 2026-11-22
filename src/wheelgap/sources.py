@@ -838,7 +838,10 @@ def select_uv_dependencies(
                 source.uv_default_groups = [canonicalize_name(g) for g in defaults]
             else:
                 raise SourceError(f"{pyproject}: [tool.uv] default-groups must be a list of strings or 'all'")
-        if source.edges is None:
+        # An empty lock (no packages: a Poetry project uv locked, or one with only empty dependency groups) has no
+        # roots, but nothing to install either: it goes on to the checks below, so a group its manifest lists is
+        # known, any other extra, group or default group is unknown, as uv sync says.
+        if source.edges is None and source.uv_packages:
             raise SourceError(f"{source.label}: cannot select extras/groups without project or manifest roots")
         packages = source.uv_packages or []
         roots = uv_selected_roots(source)
