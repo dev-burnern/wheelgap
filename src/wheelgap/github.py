@@ -175,13 +175,26 @@ _OTHER_BREAKS = re.compile("[\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
 _NAME_START_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
-def requirement_lines(path: Path, seen: set[Path] | None = None) -> list[tuple[Package, Path, int | None]] | None:
+def requirement_lines(
+    path: Path, seen: set[Path] | None = None, constraint_paths: tuple[Path, ...] = ()
+) -> list[tuple[Package, Path, int | None]] | None:
     """Each requirement reached through -r/-c, as the parser reads it: the package, the file and the line its name
     is on (None if that isn't clear). A constraints file's own lines aren't requirements. None if a file can't be
     read the same way. A file is read through the folder it was named in, as the parser reads it, so an annotation
     is on the file pip reads; `seen` keeps the resolved path, so a file reached by two names is scanned once (if
     the parser then finds other includes under the second name, the lists differ and Locator uses no lines)."""
-    return _requirement_lines(path, {False: set() if seen is None else seen, True: set()})
+    state: dict[bool, set[Path]] = {False: set() if seen is None else seen, True: set()}
+    out: list[tuple[Package, Path, int | None]] = []
+    for constraint_path in constraint_paths:
+        included = _requirement_lines(constraint_path, state, constraint=True)
+        if included is None:
+            return None
+        out.extend(included)
+    main_items = _requirement_lines(path, state)
+    if main_items is None:
+        return None
+    out.extend(main_items)
+    return out
 
 
 def _requirement_lines(
@@ -296,7 +309,7 @@ class Locator:
     @staticmethod
     def _read(source: Source, path: Path) -> dict:
         if source.kind == "requirements":
-            scanned = requirement_lines(path)
+            scanned = requirement_lines(path, constraint_paths=source.constraint_paths)
             if scanned is None:
                 return {}
             # The scan must find the same requirements as the parser, in the same order, or no line is trusted.
@@ -366,6 +379,7 @@ def annotation(
     fills: list[gapwheels.Fill] | None = None,
     *,
     installed_by: str | None = None,
+    installed_through: tuple[Path, str] | None = None,
 ) -> str:
     multi_py = len({t.python for t in targets}) > 1
     by_status: dict[Status, list[str]] = {}
@@ -389,20 +403,6 @@ def annotation(
             for n in row.direct_via.get(t, ()):
                 direct.setdefault(canonicalize_name(n), n)
     names = list(direct.values())
-    message = f"{name} {'; '.join(parts)}"
-    if names:
-        message += f" (via {', '.join(names)}{'' if not any(rooted) else ' on some targets'})"
-    if installed_by is not None:
-        message += f" (installed by {installed_by})"
-    message += "."
-    if pkg.error:
-        message += f" Lookup error: {pkg.error}."
-    if level == "warning":
-        required = [s for t, s in row.results.items() if t not in row.ignored and t not in advisory]
-        if Status.SOURCE in required:
-            message += " Source builds are allowed (fail-on missing), so this doesn't fail the run."
-        else:
-            message += " Gaps on advisory targets don't fail the run."
     location = locator.locate(pkg)
     if deps_resolved and location is not None and not (gap_targets and all(rooted)):
         # Not the file's own requirement on every gap target, so its own line (if it has one, say with a marker
@@ -412,6 +412,27 @@ def annotation(
         transitive = not any(rooted) and all(row.direct_via.get(t) for t in gap_targets)
         via = locator.locate_via(pkg, names[0]) if transitive and len(names) == 1 else None
         location = via if via is not None else (location[0], None)
+    message = f"{name} {'; '.join(parts)}"
+    if names:
+        message += f" (via {', '.join(names)}{'' if not any(rooted) else ' on some targets'})"
+    if installed_by is not None:
+        through = (
+            f", through {installed_through[1]}"
+            if installed_through is not None
+            and location is not None
+            and location[0].resolve() != installed_through[0].resolve()
+            else ""
+        )
+        message += f" (installed by {installed_by}{through})"
+    message += "."
+    if pkg.error:
+        message += f" Lookup error: {pkg.error}."
+    if level == "warning":
+        required = [s for t, s in row.results.items() if t not in row.ignored and t not in advisory]
+        if Status.SOURCE in required:
+            message += " Source builds are allowed (fail-on missing), so this doesn't fail the run."
+        else:
+            message += " Gaps on advisory targets don't fail the run."
     file = line = None
     if location is not None:
         file = relative_path(location[0])
@@ -433,6 +454,7 @@ def github_annotations(
     fills: list[gapwheels.Fill] | None = None,
     *,
     installed_by: Mapping[int, str] | None = None,
+    installed_through: Mapping[int, tuple[Path, str]] | None = None,
 ) -> list[str]:
     """One ::error per failing package and one ::warning per package whose gaps don't fail the run (source builds
     that --fail-on missing allows, or gaps only on --advisory targets), at most ANNOTATION_LIMIT of each: past that,
@@ -456,6 +478,7 @@ def github_annotations(
                 advisory,
                 filled.get(id(r)),
                 installed_by=installed_by.get(id(r.package)) if installed_by is not None else None,
+                installed_through=installed_through.get(id(r.package)) if installed_through is not None else None,
             )
             for r in shown
         ]

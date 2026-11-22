@@ -187,6 +187,7 @@ class Source:
     # Scripts and pyproject.toml: uv's exclude-newer (#521). A file uploaded at or after the cutoff isn't installed;
     # exclude-newer-package gives the packages it names their own cutoff, or none (uv's `false`: None here).
     exclude_newer: datetime | None = None
+    constraint_paths: tuple[Path, ...] = ()
     exclude_newer_package: dict[str, datetime | None] = field(default_factory=dict)
     # A uv setting that may set a cutoff here but that wheelgap doesn't read, for a note.
     exclude_newer_unread: str | None = None
@@ -3292,7 +3293,7 @@ def load_file(path: Path, environment: str | None = None, constraint_paths: tupl
         source = parse_requirements(path, constraint_paths)
     else:
         source = READERS[kind](path)
-    source.path, source.kind = path, kind
+    source.path, source.kind, source.constraint_paths = path, kind, constraint_paths
     _check_field_types(path, source)
     return source
 

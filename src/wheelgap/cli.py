@@ -3105,7 +3105,25 @@ def _main(argv: list[str], project: Path | None = None) -> int:
             if install_sites
             else None
         )
-        for command in github_annotations(rows, targets, sources, failing, advisory, fills, installed_by=installed_by):
+        installed_through = (
+            {
+                package_id: (source.path, source.path.relative_to(context_dir).as_posix())
+                for package_id, source in source_of.items()
+                if source.path is not None and source.path in install_sites
+            }
+            if install_sites
+            else None
+        )
+        for command in github_annotations(
+            rows,
+            targets,
+            sources,
+            failing,
+            advisory,
+            fills,
+            installed_by=installed_by,
+            installed_through=installed_through,
+        ):
             write_command(command, sys.stderr if args.json or args.markdown else sys.stdout)
         for level, file, at_line, message in dockerfile_results(dockerfile_notes, dockerfile_warnings):
             at_path = relative_path(Path(file))

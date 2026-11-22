@@ -138,6 +138,10 @@ isn't certain, the annotation names the file without a line and the message name
 With [`--fix`](cli.md#fix) in `args` (**after 0.13.0**), the annotation of a package that a gap wheel fills gets one
 more sentence, naming the targets it fills; see [below](#fix).
 
+With `--dockerfile-inputs`, each annotation ends with `(installed by Dockerfile:4)`. When the package comes from a
+file included with `-r` (at any depth, including `-r` inside a `-c` constraints file), it also names the top file the
+`RUN` line passed: `(installed by Dockerfile:4, through requirements.txt)`.
+
 ### Fixing a gap with a gap wheel {#fix}
 
 **After 0.13.0.** Put [`--fix`](cli.md#fix) in `args` to see which gaps a wheel on wheelgap's

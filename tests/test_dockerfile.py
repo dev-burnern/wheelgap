@@ -4423,3 +4423,61 @@ def test_dockerfile_requirements_reads_only_plain_runs_on_a_windows_image(tmp_pa
         dockerfile_requirements(path)
     path = _context(tmp_path, head + "RUN pip install -r requirements.txt\n")
     assert dockerfile_requirements(path)
+
+
+def test_github_annotations_with_dockerfile_inputs_names_top_file_when_included(
+    tmp_path, capsys, fake_pypi, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+
+    reqs_dir = tmp_path / "reqs"
+    reqs_dir.mkdir()
+    deep_dir = reqs_dir / "deep"
+    deep_dir.mkdir()
+    (reqs_dir / "base.txt").write_text("nowheels==0.9\n", encoding="utf-8")
+    (deep_dir / "leaf.txt").write_text("winonly\n", encoding="utf-8")
+    (reqs_dir / "mid.txt").write_text("-r deep/leaf.txt\n", encoding="utf-8")
+    (tmp_path / "from_constraints.txt").write_text("fastlib==2.0.0\n", encoding="utf-8")
+    (tmp_path / "constraints.txt").write_text("-r from_constraints.txt\n", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("-r reqs/base.txt\n-r reqs/mid.txt\npurewheel==3.1\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt -c constraints.txt\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(["--dockerfile", "Dockerfile", "--dockerfile-inputs", "--github-annotations", "-t", "musl-aarch64"]) == 1
+    )
+    out = capsys.readouterr().out
+    # 1. Direct include: names top file through requirements.txt
+    assert (
+        "::error file=reqs/base.txt,line=1,title=nowheels 0.9%3A builds from source::"
+        "nowheels 0.9 builds from source on musl-aarch64 (installed by Dockerfile:4, through requirements.txt)."
+    ) in out
+    # 2. Two includes deep: names top file only (not reqs/mid.txt)
+    assert (
+        "::error file=reqs/deep/leaf.txt,line=1,title=winonly 311%3A can't install::"
+        "winonly 311 can't install on musl-aarch64 (installed by Dockerfile:4, through requirements.txt)."
+    ) in out
+    assert "mid.txt" not in out
+    # 3. Package from -r inside -c constraints file: names top file through requirements.txt
+    assert (
+        "::error file=from_constraints.txt,line=1,title=fastlib 2.0.0%3A builds from source::"
+        "fastlib 2.0.0 builds from source on musl-aarch64 (installed by Dockerfile:4, through requirements.txt)."
+    ) in out
+
+    # 4. Package directly in the top file: message unchanged (no ", through ...")
+    (tmp_path / "requirements.txt").write_text("nowheels==0.9\n", encoding="utf-8")
+    (tmp_path / "constraints.txt").write_text("", encoding="utf-8")
+    assert (
+        main(["--dockerfile", "Dockerfile", "--dockerfile-inputs", "--github-annotations", "-t", "musl-aarch64"]) == 1
+    )
+    top_out = capsys.readouterr().out
+    assert (
+        "::error file=requirements.txt,line=1,title=nowheels 0.9%3A builds from source::"
+        "nowheels 0.9 builds from source on musl-aarch64 (installed by Dockerfile:4)."
+    ) in top_out
+    assert ", through " not in top_out
