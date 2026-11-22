@@ -4019,9 +4019,9 @@ def test_github_annotations_requirements_cross_check(capsys, fake_pypi, tmp_path
     req.write_text("nowheels==0.9\n", encoding="utf-8")
     scan = github.requirement_lines
 
-    def changed(path, seen=None):
+    def changed(path, seen=None, constraint_paths=()):
         req.write_text("purewheel==3.1\nnowheels==0.9\n", encoding="utf-8")
-        return scan(path, seen)
+        return scan(path, seen, constraint_paths)
 
     monkeypatch.setattr(github, "requirement_lines", changed)
     assert annotate(capsys, tmp_path, str(req)) == ["::error file=requirements.txt,"]

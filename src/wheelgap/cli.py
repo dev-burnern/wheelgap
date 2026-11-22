@@ -1452,6 +1452,9 @@ def target_lines(
 
 
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
+# PEP 751 lock names (packaging.pylock.is_valid_pylock_path): pip 26.1 and later install `pip install -r pylock.toml`
+# (or pylock.NAME.toml) as that lock, not as a requirements file.
+_PIP_PYLOCK_NAME_RE = re.compile(r"pylock(?:\.[^.]+)?\.toml")
 
 
 def _md(text: str) -> str:
@@ -1937,9 +1940,10 @@ def gap_wheel_fills(
 ) -> list[gapwheels.Fill]:
     """--fix: the gap cells a wheel on wheelgap's gap wheel index fills. The list is read in one request that names no
     package, only when a gap of a package that is positively PyPI's could use it (gapwheels.eligible), and never when
-    packages come from another index. A cached list (cache.GAP_WHEELS_MAX_AGE) answers only when it fills at least one
-    of this run's gaps: before saying none fits, the list is fetched once more, since new wheels are published most
-    days. Notes on stderr say when it wasn't read, couldn't be (or couldn't be refreshed), or nothing fits."""
+    packages come from another index. A cached list (cache.GAP_WHEELS_MAX_AGE) answers when it fills at least one of
+    this run's gaps, or when it fills none and was saved less than cache.GAP_WHEELS_RECHECK_AGE ago; otherwise the list
+    is fetched once more before saying none fits, since new wheels are published most days. Notes on stderr say when
+    it wasn't read, couldn't be (or couldn't be refreshed), or that nothing on the list fetched at a given time fits."""
     other = origin.other_index(index_url)
     if other is not None:
         if not quiet:
@@ -1975,6 +1979,15 @@ def gap_wheel_fills(
                 fills = gapwheels.fillable(wanted, targets, source_of, cached_wheels, private, index_url)
                 if fills:
                     return fills
+                if saved_time is not None and cache._now() - saved_time < cache.GAP_WHEELS_RECHECK_AGE:
+                    if not quiet:
+                        time_str = datetime.datetime.fromtimestamp(saved_time, datetime.UTC).strftime("%H:%M UTC")
+                        print(
+                            f"wheelgap: note: --fix: no wheel on the gap wheel list fetched at {time_str} "
+                            "fills these gaps",
+                            file=sys.stderr,
+                        )
+                    return []
         live_wheels = gapwheels.fetch(write_cache=write_cache)
         if live_wheels is None:
             if cached_wheels is not None and saved_time is not None:
@@ -1992,7 +2005,11 @@ def gap_wheel_fills(
             return []
         fills = gapwheels.fillable(wanted, targets, source_of, live_wheels, private, index_url)
         if not fills and not quiet:
-            print("wheelgap: note: --fix: no wheel on the gap wheel index fills these gaps", file=sys.stderr)
+            time_str = datetime.datetime.fromtimestamp(cache._now(), datetime.UTC).strftime("%H:%M UTC")
+            print(
+                f"wheelgap: note: --fix: no wheel on the gap wheel list fetched at {time_str} fills these gaps",
+                file=sys.stderr,
+            )
     return fills
 
 
@@ -2417,8 +2434,21 @@ def _main(argv: list[str], project: Path | None = None) -> int:
             elif args.dockerfile_inputs:
                 # The requirements files the install lines read, then the requirements they name: one source per
                 # RUN line, labelled with it, checked as names on wheelgap's own command line are.
+                # pip reads a `pip install -r FILE` file as requirements whatever its name, except a PEP 751 lock
+                # name (pylock.toml, pylock.NAME.toml), which pip 26.1 and later install as that lock; a uv line's
+                # file keeps the reader its name picks.
+                docker_kinds = {
+                    req: "pylock" if _PIP_PYLOCK_NAME_RE.fullmatch(req.name) else "requirements"
+                    for line, req in installs
+                    if (line, req) not in uv_installs
+                }
                 sources = (
-                    load_inputs(args.inputs, args.environment, requirements_constraints=docker_constraints)
+                    load_inputs(
+                        args.inputs,
+                        args.environment,
+                        requirements_constraints=docker_constraints,
+                        file_kinds=docker_kinds,
+                    )
                     if args.inputs
                     else []
                 )
@@ -3105,7 +3135,35 @@ def _main(argv: list[str], project: Path | None = None) -> int:
             if install_sites
             else None
         )
-        for command in github_annotations(rows, targets, sources, failing, advisory, fills, installed_by=installed_by):
+        # For each file a RUN line reads through -r or -c, the file on the line it is reached from, relative to the
+        # build context as the header and --json name it: the requirements file, or the -c file whose -r brought it
+        # (the requirements file when both lead there).
+        tops: dict[Path, dict[Path, str]] = {}
+        for install_line, requirements in installs:
+            reached = tops.setdefault(requirements, {})
+            for on_line in (requirements, *docker_constraints.get(requirements, ())):
+                for include in docker_includes.get((install_line, on_line), ()):
+                    if include.resolve() != requirements.resolve():  # a -c file's -r back to the file on the line
+                        reached.setdefault(include.resolve(), on_line.relative_to(context_dir).as_posix())
+        installed_through = (
+            {
+                package_id: tops[source.path]
+                for package_id, source in source_of.items()
+                if source.path is not None and source.path in tops
+            }
+            if install_sites
+            else None
+        )
+        for command in github_annotations(
+            rows,
+            targets,
+            sources,
+            failing,
+            advisory,
+            fills,
+            installed_by=installed_by,
+            installed_through=installed_through,
+        ):
             write_command(command, sys.stderr if args.json or args.markdown else sys.stdout)
         for level, file, at_line, message in dockerfile_results(dockerfile_notes, dockerfile_warnings):
             at_path = relative_path(Path(file))

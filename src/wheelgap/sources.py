@@ -187,6 +187,7 @@ class Source:
     # Scripts and pyproject.toml: uv's exclude-newer (#521). A file uploaded at or after the cutoff isn't installed;
     # exclude-newer-package gives the packages it names their own cutoff, or none (uv's `false`: None here).
     exclude_newer: datetime | None = None
+    constraint_paths: tuple[Path, ...] = ()
     exclude_newer_package: dict[str, datetime | None] = field(default_factory=dict)
     # A uv setting that may set a cutoff here but that wheelgap doesn't read, for a note.
     exclude_newer_unread: str | None = None
@@ -3283,10 +3284,17 @@ PARSERS = {
 }
 
 
-def load_file(path: Path, environment: str | None = None, constraint_paths: tuple[Path, ...] = ()) -> Source:
+def load_file(
+    path: Path,
+    environment: str | None = None,
+    constraint_paths: tuple[Path, ...] = (),
+    *,
+    kind: str | None = None,
+) -> Source:
     """Read one input file. `environment` picks a pixi.lock environment (default: `default`). `constraint_paths` are
-    the constraints files given beside a requirements file (see parse_requirements)."""
-    kind = file_kind(path)
+    the constraints files given beside a requirements file (see parse_requirements). `kind` overrides `file_kind(path)`
+    when the caller already knows the format (for example `pip install -r FILE` in a Dockerfile)."""
+    kind = kind or file_kind(path)
     if constraint_paths and kind != "requirements":
         raise SourceError(f"{path.name}: constraints files (pip install -c) only apply to a requirements file")
     if kind == "pixi":
@@ -3295,7 +3303,7 @@ def load_file(path: Path, environment: str | None = None, constraint_paths: tupl
         source = parse_requirements(path, constraint_paths)
     else:
         source = READERS[kind](path)
-    source.path, source.kind = path, kind
+    source.path, source.kind, source.constraint_paths = path, kind, constraint_paths
     _check_field_types(path, source)
     return source
 
@@ -3802,11 +3810,13 @@ def load_inputs(
     environment: str | None = None,
     *,
     requirements_constraints: Mapping[Path, tuple[Path, ...]] | None = None,
+    file_kinds: Mapping[Path, str] | None = None,
 ) -> list[Source]:
     """Each input is a file, a directory (its input is found by load_directory) or a requirement like 'numpy==2.3.4'.
     `environment` picks the pixi.lock environment; with no pixi.lock input it's an error.
     `requirements_constraints` maps a requirements file among the inputs to the constraints files given beside it
-    (--dockerfile-inputs: `pip install -r FILE -c CONSTRAINTS`)."""
+    (--dockerfile-inputs: `pip install -r FILE -c CONSTRAINTS`).
+    `file_kinds` overrides `file_kind()` for specific files (e.g. `pip install -r` files with any name)."""
     if environment == "":
         raise SourceError("--environment needs a name")
     sources: list[Source] = []
@@ -3817,7 +3827,8 @@ def load_inputs(
             sources.append(load_directory(p, environment))
         elif p.is_file():
             constraints = requirements_constraints.get(p, ()) if requirements_constraints is not None else ()
-            sources.append(load_file(p, environment, constraints))
+            kind = file_kinds.get(p) if file_kinds is not None else None
+            sources.append(load_file(p, environment, constraints, kind=kind))
         elif "/" in item or item.endswith((".lock", ".txt", ".toml", ".json", ".in", ".yml", ".yaml")):
             raise SourceError(f"{item}: no such file")
         else:
