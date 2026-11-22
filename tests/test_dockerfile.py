@@ -4463,10 +4463,10 @@ def test_github_annotations_with_dockerfile_inputs_names_top_file_when_included(
         "winonly 311 can't install on musl-aarch64 (installed by Dockerfile:4, through requirements.txt)."
     ) in out
     assert "mid.txt" not in out
-    # 3. Package from -r inside -c constraints file: names top file through requirements.txt
+    # 3. Package from -r inside the -c file: names the -c file, which is what leads to it from the RUN line
     assert (
         "::error file=from_constraints.txt,line=1,title=fastlib 2.0.0%3A builds from source::"
-        "fastlib 2.0.0 builds from source on musl-aarch64 (installed by Dockerfile:4, through requirements.txt)."
+        "fastlib 2.0.0 builds from source on musl-aarch64 (installed by Dockerfile:4, through constraints.txt)."
     ) in out
 
     # 4. Package directly in the top file: message unchanged (no ", through ...")

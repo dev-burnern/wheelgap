@@ -379,7 +379,7 @@ def annotation(
     fills: list[gapwheels.Fill] | None = None,
     *,
     installed_by: str | None = None,
-    installed_through: tuple[Path, str] | None = None,
+    installed_through: Mapping[Path, str] | None = None,
 ) -> str:
     multi_py = len({t.python for t in targets}) > 1
     by_status: dict[Status, list[str]] = {}
@@ -416,13 +416,10 @@ def annotation(
     if names:
         message += f" (via {', '.join(names)}{'' if not any(rooted) else ' on some targets'})"
     if installed_by is not None:
-        through = (
-            f", through {installed_through[1]}"
-            if installed_through is not None
-            and location is not None
-            and location[0].resolve() != installed_through[0].resolve()
-            else ""
-        )
+        # installed_through: each file the RUN line reads through an include (resolved), and the file on the line
+        # that leads to it. The file on the line itself isn't there, so its own packages say no more.
+        top = installed_through.get(location[0].resolve()) if installed_through and location is not None else None
+        through = f", through {top}" if top is not None else ""
         message += f" (installed by {installed_by}{through})"
     message += "."
     if pkg.error:
@@ -454,7 +451,7 @@ def github_annotations(
     fills: list[gapwheels.Fill] | None = None,
     *,
     installed_by: Mapping[int, str] | None = None,
-    installed_through: Mapping[int, tuple[Path, str]] | None = None,
+    installed_through: Mapping[int, Mapping[Path, str]] | None = None,
 ) -> list[str]:
     """One ::error per failing package and one ::warning per package whose gaps don't fail the run (source builds
     that --fail-on missing allows, or gaps only on --advisory targets), at most ANNOTATION_LIMIT of each: past that,
