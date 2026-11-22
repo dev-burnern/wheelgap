@@ -4452,6 +4452,7 @@ def test_cli_dockerfile_inputs_reads_a_pip_lines_pylock_as_a_lock(tmp_path, caps
     main(["--dockerfile", str(dockerfile), "--dockerfile-inputs", "--json"])
     assert "fastlib" in {p["name"] for p in json.loads(capsys.readouterr().out)["packages"]}
 
+
 def test_cli_dockerfile_inputs_uv_still_refuses_non_requirements_filename_and_cli_keeps_script_reader(
     tmp_path, capsys, fake_pypi
 ):
