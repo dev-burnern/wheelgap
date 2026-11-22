@@ -2272,3 +2272,76 @@ def test_script_lock_ignores_the_default_groups_of_a_pyproject_beside_it(tmp_pat
     packages = json.loads(capsys.readouterr().out)["packages"]
     assert [(p["name"], p["results"]) for p in packages] == [("purewheel", {"win-arm64": "wheel"})]
     assert fake_pypi == []
+
+
+EMPTY_UV_LOCK = 'version = 1\nrevision = 3\nrequires-python = ">=3.11"\n'
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [UvSelection(no_dev=True), UvSelection(all_extras=True), UvSelection(), UvSelection(all_extras=True, no_dev=True)],
+)
+def test_empty_lock_with_a_selection_has_nothing_to_install(tmp_path, selection):
+    # Textualize/textual's uv.lock (a Poetry project, locked by uv with nothing in it): `uv sync --no-dev` or
+    # `--all-extras` installs nothing, so neither does wheelgap, instead of refusing the selection.
+    (tmp_path / "uv.lock").write_text(EMPTY_UV_LOCK, encoding="utf-8")
+    sources = load_inputs([str(tmp_path / "uv.lock")])
+    select_uv_dependencies(sources, selection)
+    assert [p.name for source in sources for p in source.packages] == []
+
+
+@pytest.mark.parametrize(
+    "selection, message",
+    [
+        (UvSelection(extras=frozenset({"syntax"})), "unknown extras: syntax"),
+        (UvSelection(groups=frozenset({"dev"})), "unknown groups: dev"),
+        (UvSelection(only_groups=frozenset({"dev"})), "unknown groups: dev"),
+    ],
+)
+def test_empty_lock_naming_an_extra_or_group_is_an_error(tmp_path, selection, message):
+    # uv sync --extra syntax: "Extra `syntax` is not defined in any project's `optional-dependencies` table".
+    (tmp_path / "uv.lock").write_text(EMPTY_UV_LOCK, encoding="utf-8")
+    with pytest.raises(SourceError, match=message):
+        select_uv_dependencies(load_inputs([str(tmp_path / "uv.lock")]), selection)
+
+
+def test_cli_empty_lock_with_no_dev_has_no_packages_to_check(tmp_path, capsys, fake_pypi):
+    (tmp_path / "uv.lock").write_text(EMPTY_UV_LOCK, encoding="utf-8")
+    assert main([str(tmp_path / "uv.lock"), "--no-dev", "-p", "3.13", "-t", "linux-x86_64"]) == 0
+    assert "No packages to check" in capsys.readouterr().out
+    assert fake_pypi == []
+
+
+# `[dependency-groups] dev = []` and no [project]: uv lock writes the groups to the manifest and no packages.
+GROUPS_ONLY_UV_LOCK = EMPTY_UV_LOCK + "\n[manifest.dependency-groups]\ndev = []\nlint = []\n"
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        UvSelection(groups=frozenset({"dev"})),
+        UvSelection(only_groups=frozenset({"lint"})),
+        UvSelection(no_dev=True, groups=frozenset({"lint"})),
+    ],
+)
+def test_empty_lock_with_manifest_groups_selects_them(tmp_path, selection):
+    # uv sync --group dev / --only-group lint on that lock: "Would make no changes", not an unknown group.
+    (tmp_path / "uv.lock").write_text(GROUPS_ONLY_UV_LOCK, encoding="utf-8")
+    sources = load_inputs([str(tmp_path / "uv.lock")])
+    select_uv_dependencies(sources, selection)
+    assert [p.name for source in sources for p in source.packages] == []
+
+
+def test_empty_lock_with_manifest_groups_still_rejects_other_groups(tmp_path):
+    (tmp_path / "uv.lock").write_text(GROUPS_ONLY_UV_LOCK, encoding="utf-8")
+    with pytest.raises(SourceError, match="unknown groups: docs"):
+        select_uv_dependencies(load_inputs([str(tmp_path / "uv.lock")]), UvSelection(groups=frozenset({"docs"})))
+
+
+def test_empty_lock_with_an_unknown_default_group_is_an_error(tmp_path):
+    # uv sync --no-dev: "Default group `nope` (from `tool.uv.default-groups`) is not defined in the project's
+    # `dependency-groups` table", whatever the flags.
+    (tmp_path / "uv.lock").write_text(EMPTY_UV_LOCK, encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\ndefault-groups = ["nope"]\n', encoding="utf-8")
+    with pytest.raises(SourceError, match="unknown default groups: nope"):
+        select_uv_dependencies(load_inputs([str(tmp_path / "uv.lock")]), UvSelection(no_dev=True))
