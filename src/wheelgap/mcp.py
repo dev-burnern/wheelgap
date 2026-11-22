@@ -1110,6 +1110,18 @@ _CLI_ADVICE_ELSEWHERE = {
 _CLI_ADVICE_RE = re.compile(
     r"(?<![\w/\\-])(?<!pip install )(?:" + "|".join(map(re.escape, _CLI_ADVICE)) + r")(?![\w/\\-])"
 )
+# Advice that names a Python version, so it can't be a fixed phrase above. check_dockerfile has no python argument:
+# the Python it checks is the image's, so the other way out of a `python3.12 -m pip` line is check_lockfile.
+_CLI_ADVICE_VERSIONED = [
+    (
+        re.compile(r"(?<![\w/\\-])try -p (\d+\.\d+t?) -t pyodide(?![\w/\\-])"),
+        r"try python '\1' with targets ['pyodide']",
+    ),
+    (
+        re.compile(r"(?<![\w/\\-])or check with -p (\d+\.\d+t?)(?![\w/\\-])"),
+        r"or call check_lockfile on the requirements files with python '\1' and the image's platform as targets",
+    ),
+]
 
 
 def _translate_cli_message(message: str, *, lockfile: bool = False) -> str:
@@ -1124,7 +1136,14 @@ def _translate_cli_message(message: str, *, lockfile: bool = False) -> str:
             return _CLI_ADVICE_ELSEWHERE[match[0]]
         return _CLI_ADVICE[match[0]]
 
-    return _CLI_ADVICE_RE.sub(replace, message)
+    message = _CLI_ADVICE_RE.sub(replace, message)
+    for pattern, advice in _CLI_ADVICE_VERSIONED:
+
+        def versioned(match: re.Match[str], text: str = message, advice: str = advice) -> str:
+            return match[0] if text.count("`", 0, match.start()) % 2 else match.expand(advice)
+
+        message = pattern.sub(versioned, message)
+    return message
 
 
 def _run_cli(

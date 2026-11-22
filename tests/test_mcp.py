@@ -910,6 +910,24 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
         ),
         ("--index-url is not a valid URL", True, "index-url in [tool.wheelgap] is not a valid URL"),
         ("--index-url must be an http(s) URL", True, "index-url in [tool.wheelgap] must be an http(s) URL"),
+        # Advice that names a Python version: check_dockerfile has no python argument, check_package has one.
+        (
+            "`python3.12 -m pip install -r requirements.txt` installs for Python 3.12, and this run checks 3.13: "
+            "run pip with the image's own Python, or check with -p 3.12",
+            False,
+            "`python3.12 -m pip install -r requirements.txt` installs for Python 3.12, and this run checks 3.13: "
+            "run pip with the image's own Python, or call check_lockfile on the requirements files with python "
+            "'3.12' and the image's platform as targets",
+        ),
+        (
+            "pyodide-lock.json is for Python 3.12 (Pyodide 0.27.0), but no pyodide target uses Python 3.12 "
+            "(pyodide targets: 3.13); try -p 3.12 -t pyodide",
+            False,
+            "pyodide-lock.json is for Python 3.12 (Pyodide 0.27.0), but no pyodide target uses Python 3.12 "
+            "(pyodide targets: 3.13); try python '3.12' with targets ['pyodide']",
+        ),
+        ("RUN cd /src && try -p 3.12 -t pyodide-build", False, None),
+        ("`wheelgap PATH or check with -p 3.12`", False, None),
     ],
 )
 def test_cli_advice_is_translated_for_the_calling_tool(message, lockfile, translated):
@@ -1284,6 +1302,23 @@ def test_check_dockerfile_inputs_refused_line_is_a_tool_error_with_its_line(fake
     # -r FILE and --no-cache-dir are pip's own options, in the Dockerfile's words: they stay.
     assert f"{dockerfile}:4: pip install --pre: the inputs argument only reads -r FILE" in text
     assert "--dockerfile-inputs" not in text  # the CLI's flag isn't an argument here
+    assert not fake_pypi
+
+
+def test_check_dockerfile_inputs_other_python_names_no_python_flag(fake_pypi, tmp_path):
+    # check_dockerfile checks the image's Python and has no python argument, so -p is no way out (#669).
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.13\nWORKDIR /app\nCOPY requirements.txt .\nRUN python3.12 -m pip install -r requirements.txt\n",
+        encoding="utf-8",
+    )
+    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(dockerfile), inputs=True))
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert "installs for Python 3.12, and this run checks 3.13" in text
+    assert "check_lockfile on the requirements files with python '3.12'" in text
+    assert "-p 3.12" not in text
     assert not fake_pypi
 
 
