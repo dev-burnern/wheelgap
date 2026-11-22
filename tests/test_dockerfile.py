@@ -4446,12 +4446,12 @@ def test_exact_case_path_matches_only_exact_component_names(tmp_path):
         (
             "FROM python:3.13-slim\nWORKDIR /app\nCOPY Requirements.txt .\nRUN pip install -r Requirements.txt\n",
             "COPY Requirements.txt: not found in the build context",
-            "it has requirements.txt, and the image's file system tells the two apart",
+            "it has requirements.txt, and a Linux image build tells the two apart",
         ),
         (
             "FROM python:3.13-slim\nWORKDIR /app\nCOPY Reqs/base.txt .\nRUN pip install -r base.txt\n",
             "COPY Reqs/base.txt: not found in the build context",
-            "it has reqs/base.txt, and the image's file system tells the two apart",
+            "it has reqs/base.txt, and a Linux image build tells the two apart",
         ),
         (
             "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r Requirements.txt\n",
@@ -4475,6 +4475,19 @@ def test_dockerfile_requirements_rejects_case_mismatched_copy_paths(
     # Only a host that ignores case finds the file under the other name, and says which name the context has.
     if case_hint is not None and (tmp_path / "REQUIREMENTS.TXT").exists():
         assert case_hint in str(raised.value)
+
+
+def test_dockerfile_requirements_rejects_case_mismatched_include_under_folder_copy(tmp_path):
+    # An include reached through a folder COPY: on a host that ignores case, Base.txt used to be read as base.txt.
+    (tmp_path / "requirements.txt").write_text("-r Base.txt\n", encoding="utf-8")
+    (tmp_path / "base.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\n", encoding="utf-8"
+    )
+
+    with pytest.raises(DockerfileError, match=re.escape("/app/Base.txt isn't copied from the build context")):
+        dockerfile_requirements(dockerfile)
 
 
 def test_dockerfile_requirements_reads_exact_case_copy_paths(tmp_path):

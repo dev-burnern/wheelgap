@@ -1175,7 +1175,7 @@ def _read_copy(
             if actual is not None:
                 return unread(
                     f"COPY {name}: not found in the build context "
-                    f"(it has {actual}, and the image's file system tells the two apart)"
+                    f"(it has {actual}, and a Linux image build tells the two apart)"
                 )
             return unread(f"COPY {name}: not found in the build context ({context_label})")
         if not host.resolve().is_relative_to(root):
