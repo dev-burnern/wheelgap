@@ -4030,6 +4030,47 @@ def test_github_annotations_requirements_cross_check(capsys, fake_pypi, tmp_path
     assert scan(req) is None
 
 
+def test_github_annotations_keep_lines_when_included_file_is_reached_via_symlink_in_another_folder(
+    capsys, fake_pypi, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    (tmp_path / "shared.txt").write_text("-r more.txt\npurewheel==3.1\n", encoding="utf-8")
+    (tmp_path / "more.txt").write_text("unpinned==4.2\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "more.txt").write_text("fastlib==2.0.0\n", encoding="utf-8")
+    try:
+        (sub / "link.txt").symlink_to("../shared.txt")
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform/user")
+    req = tmp_path / "requirements.txt"
+    req.write_text("-r shared.txt\n-r sub/link.txt\nnowheels==0.9\n", encoding="utf-8")
+
+    _, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "musl-aarch64", "--github-annotations")
+    lines = annotation_lines(out)
+    assert any(line.startswith("::error file=requirements.txt,line=3,title=nowheels 0.9") for line in lines)
+    assert any(line.startswith("::error file=sub/more.txt,line=1,title=fastlib 2.0.0") for line in lines)
+
+
+def test_github_annotations_keep_lines_for_repeated_include_and_handle_cycles(capsys, fake_pypi, tmp_path, monkeypatch):
+    from wheelgap import github
+
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    (tmp_path / "shared.txt").write_text("fastlib==2.0.0\n", encoding="utf-8")
+    req = tmp_path / "requirements.txt"
+    req.write_text("-r shared.txt\n-r shared.txt\nnowheels==0.9\n", encoding="utf-8")
+
+    _, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "musl-aarch64", "--github-annotations")
+    lines = annotation_lines(out)
+    assert any(line.startswith("::error file=requirements.txt,line=3,title=nowheels 0.9") for line in lines)
+    assert any(line.startswith("::error file=shared.txt,line=1,title=fastlib 2.0.0") for line in lines)
+
+    # An include cycle must return None rather than hang.
+    (tmp_path / "a.txt").write_text("-r b.txt\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("-r a.txt\n", encoding="utf-8")
+    assert github.requirement_lines(tmp_path / "a.txt") is None
+
+
 def test_github_annotations_messages(capsys, fake_pypi, fixtures, tmp_path, monkeypatch):
     # A file outside the workspace loses its line too; several Pythons label targets with the Python.
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))

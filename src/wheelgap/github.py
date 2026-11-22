@@ -178,71 +178,86 @@ _NAME_START_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 def requirement_lines(path: Path, seen: set[Path] | None = None) -> list[tuple[Package, Path, int | None]] | None:
     """Each requirement reached through -r/-c, as the parser reads it: the package, the file and the line its name
     is on (None if that isn't clear). A constraints file's own lines aren't requirements. None if a file can't be
-    read the same way. A file is read through the folder it was named in, as the parser reads it, so an annotation
-    is on the file pip reads; `seen` keeps the resolved path, so a file reached by two names is scanned once (if
-    the parser then finds other includes under the second name, the lists differ and Locator uses no lines)."""
+    read the same way or an include cycle is hit. A file is read through the folder it was named in, as the parser
+    reads it; on a second visit of the same real file its own lines are skipped while its includes are followed
+    again from the new folder."""
     return _requirement_lines(path, {False: set() if seen is None else seen, True: set()})
 
 
 def _requirement_lines(
-    path: Path, seen: dict[bool, set[Path]], constraint: bool = False
+    path: Path,
+    seen: dict[bool, set[Path]],
+    constraint: bool = False,
+    stack: list[Path] | None = None,
 ) -> list[tuple[Package, Path, int | None]] | None:
     """`seen` is the parser's: the resolved paths already read as requirements (False) and as constraints (True),
-    since a file can be read once in each role."""
+    since a file can be read once in each role. `stack` tracks the active chain of named paths so include cycles
+    return None rather than recursing forever."""
     path = Path(os.path.abspath(path))
+    if stack is None:
+        stack = []
+    if path in stack:
+        return None
     resolved = path.resolve()
-    if resolved in seen[constraint]:
-        return []
+    already_seen = resolved in seen[constraint]
     seen[constraint].add(resolved)
     lines = _lines(path)
     if lines is None or any(_OTHER_BREAKS.search(line) for line in lines):
         return None
+    stack.append(path)
     out: list[tuple[Package, Path, int | None]] = []
-    number = 0
-    while number < len(lines):
-        group = [number]  # the physical lines of this logical line
-        raw = lines[number]
-        while raw.endswith("\\") and number + 1 < len(lines):  # the parser joins "\\\n" continuations
+    try:
+        number = 0
+        while number < len(lines):
+            group = [number]  # the physical lines of this logical line
+            raw = lines[number]
+            while raw.endswith("\\") and number + 1 < len(lines):  # the parser joins "\\\n" continuations
+                number += 1
+                group.append(number)
+                raw = raw[:-1] + " " + lines[number]
             number += 1
-            group.append(number)
-            raw = raw[:-1] + " " + lines[number]
-        number += 1
-        line = _COMMENT_RE.split(raw, 1)[0].strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("-"):
-            try:  # the -r/-c the parser follows, wherever it sits on the line (`--pre -r base.txt`)
-                include = _line_include(shlex.split(line), path.name)
-            except (ValueError, SourceError):
-                return None  # the parser refused this file, so there's nothing to map
-            if include:
-                is_constraint, target = include
-                if is_constraint and ("://" in target or "${" in target):
-                    continue  # the parser leaves these constraints unread
-                # -r means requirements even inside a constraints file; track each file in both roles.
-                included = _requirement_lines(path.parent / target, seen, is_constraint)
-                if included is None:
-                    return None
-                out.extend(included)
-            continue  # other options and editables: never a package with a gap
-        if constraint or line.startswith(("-", ".", "/")):
-            continue  # options, constraints, editables and paths: never a package with a gap
-        # The requirement ends before the first word that starts with "-", as the parser ends it (--hash, -f URL).
-        words = line.split(" ")
-        line = " ".join(words[: next((k for k, word in enumerate(words) if word.startswith("-")), len(words))]).strip()
-        if "://" in line and not _NAMED_URL_RE.match(line):
-            continue
-        try:
-            package = requirement_to_package(line, path.name)
-        except SourceError:
-            continue
-        if not package.skip:
-            # The first physical line with anything on it, if it starts with the package's name.
-            texts = [lines[i][:-1] if i != group[-1] else lines[i] for i in group]
-            first = next((i for i, text in zip(group, texts, strict=True) if text.strip()), None)
-            name = _NAME_START_RE.match(lines[first].strip()) if first is not None else None
-            found = first + 1 if first is not None and name and canonicalize_name(name.group()) == package.key else None
-            out.append((package, path, found))
+            line = _COMMENT_RE.split(raw, 1)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("-"):
+                try:  # the -r/-c the parser follows, wherever it sits on the line (`--pre -r base.txt`)
+                    include = _line_include(shlex.split(line), path.name)
+                except (ValueError, SourceError):
+                    return None  # the parser refused this file, so there's nothing to map
+                if include:
+                    is_constraint, target = include
+                    if is_constraint and ("://" in target or "${" in target):
+                        continue  # the parser leaves these constraints unread
+                    # -r means requirements even inside a constraints file; track each file in both roles.
+                    included = _requirement_lines(path.parent / target, seen, is_constraint, stack)
+                    if included is None:
+                        return None
+                    out.extend(included)
+                continue  # other options and editables: never a package with a gap
+            if constraint or already_seen or line.startswith(("-", ".", "/")):
+                continue  # options, constraints, already-read lines, editables and paths: skip
+            # The requirement ends before the first word that starts with "-", as the parser ends it (--hash, -f URL).
+            words = line.split(" ")
+            line = " ".join(
+                words[: next((k for k, word in enumerate(words) if word.startswith("-")), len(words))]
+            ).strip()
+            if "://" in line and not _NAMED_URL_RE.match(line):
+                continue
+            try:
+                package = requirement_to_package(line, path.name)
+            except SourceError:
+                continue
+            if not package.skip:
+                # The first physical line with anything on it, if it starts with the package's name.
+                texts = [lines[i][:-1] if i != group[-1] else lines[i] for i in group]
+                first = next((i for i, text in zip(group, texts, strict=True) if text.strip()), None)
+                name = _NAME_START_RE.match(lines[first].strip()) if first is not None else None
+                found = (
+                    first + 1 if first is not None and name and canonicalize_name(name.group()) == package.key else None
+                )
+                out.append((package, path, found))
+    finally:
+        stack.pop()
     return out
 
 
