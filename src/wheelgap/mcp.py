@@ -1071,9 +1071,14 @@ _CLI_ADVICE = {
     "--dist": "check_dist",
     "--ignore": "ignore in [tool.wheelgap]",
     "(--index-url, or index-url in [tool.wheelgap])": "(index-url in [tool.wheelgap])",
-    # Over MCP only the [tool.wheelgap] value reaches the URL checks (empty, not https, ...). Bare -t and -p aren't in
-    # the table: error text quotes Dockerfile lines (mkdir -p, cp -t), so only wheelgap's own phrases above change.
-    "--index-url": "index-url in [tool.wheelgap]",
+    # Over MCP only the [tool.wheelgap] value reaches the URL checks (pypi.check_index_url) and the notes that name
+    # another index. Bare --index-url, -t and -p aren't in the table: error text quotes requirements and Dockerfile
+    # lines (`pip ignores --index-url after a requirement`, mkdir -p, cp -t), so only wheelgap's own phrases change.
+    "(--index-url)": "(index-url in [tool.wheelgap])",
+    "--index-url is empty": "index-url in [tool.wheelgap] is empty",
+    "--index-url is not a valid URL": "index-url in [tool.wheelgap] is not a valid URL",
+    "--index-url must be an http(s) URL": "index-url in [tool.wheelgap] must be an http(s) URL",
+    "--index-url must use https": "index-url in [tool.wheelgap] must use https",
 }
 # The same advice from a tool that has no offline, dependencies or environment argument (check_dockerfile, check_dist).
 _CLI_ADVICE_ELSEWHERE = {

@@ -885,6 +885,26 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
         ("RUN <<\"EOF mkdir -p /app: Docker can't read the heredoc", False, None),
         ("Dockerfile:4: pip install --no-deps -t /deps six", False, None),
         ("Dockerfile:5: docker build -t app .", False, None),
+        # pip's own --index-url, quoted from a requirements file, is the file's option, not wheelgap's.
+        ("requirements.txt:1: pip ignores --index-url after a requirement", True, None),
+        ("requirements.txt:1: pip refuses this line: --index-url option requires 1 argument", True, None),
+        (
+            "requirements.txt:1: pip refuses this line: ambiguous option: --index (--extra-index-url, --index-url?)",
+            True,
+            None,
+        ),
+        (
+            "note: --suggest looks nothing up when packages come from another index (--index-url)",
+            True,
+            "note: --suggest looks nothing up when packages come from another index (index-url in [tool.wheelgap])",
+        ),
+        (
+            "--index-url is empty (is a CI variable unset?)",
+            True,
+            "index-url in [tool.wheelgap] is empty (is a CI variable unset?)",
+        ),
+        ("--index-url is not a valid URL", True, "index-url in [tool.wheelgap] is not a valid URL"),
+        ("--index-url must be an http(s) URL", True, "index-url in [tool.wheelgap] must be an http(s) URL"),
     ],
 )
 def test_cli_advice_is_translated_for_the_calling_tool(message, lockfile, translated):
