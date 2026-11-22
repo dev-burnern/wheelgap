@@ -2417,8 +2417,14 @@ def _main(argv: list[str], project: Path | None = None) -> int:
             elif args.dockerfile_inputs:
                 # The requirements files the install lines read, then the requirements they name: one source per
                 # RUN line, labelled with it, checked as names on wheelgap's own command line are.
+                docker_kinds = {req: "requirements" for line, req in installs if (line, req) not in uv_installs}
                 sources = (
-                    load_inputs(args.inputs, args.environment, requirements_constraints=docker_constraints)
+                    load_inputs(
+                        args.inputs,
+                        args.environment,
+                        requirements_constraints=docker_constraints,
+                        file_kinds=docker_kinds,
+                    )
                     if args.inputs
                     else []
                 )

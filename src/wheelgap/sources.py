@@ -3280,10 +3280,17 @@ PARSERS = {
 }
 
 
-def load_file(path: Path, environment: str | None = None, constraint_paths: tuple[Path, ...] = ()) -> Source:
+def load_file(
+    path: Path,
+    environment: str | None = None,
+    constraint_paths: tuple[Path, ...] = (),
+    *,
+    kind: str | None = None,
+) -> Source:
     """Read one input file. `environment` picks a pixi.lock environment (default: `default`). `constraint_paths` are
-    the constraints files given beside a requirements file (see parse_requirements)."""
-    kind = file_kind(path)
+    the constraints files given beside a requirements file (see parse_requirements). `kind` overrides `file_kind(path)`
+    when the caller already knows the format (for example `pip install -r FILE` in a Dockerfile)."""
+    kind = kind or file_kind(path)
     if constraint_paths and kind != "requirements":
         raise SourceError(f"{path.name}: constraints files (pip install -c) only apply to a requirements file")
     if kind == "pixi":
@@ -3799,11 +3806,13 @@ def load_inputs(
     environment: str | None = None,
     *,
     requirements_constraints: Mapping[Path, tuple[Path, ...]] | None = None,
+    file_kinds: Mapping[Path, str] | None = None,
 ) -> list[Source]:
     """Each input is a file, a directory (its input is found by load_directory) or a requirement like 'numpy==2.3.4'.
     `environment` picks the pixi.lock environment; with no pixi.lock input it's an error.
     `requirements_constraints` maps a requirements file among the inputs to the constraints files given beside it
-    (--dockerfile-inputs: `pip install -r FILE -c CONSTRAINTS`)."""
+    (--dockerfile-inputs: `pip install -r FILE -c CONSTRAINTS`).
+    `file_kinds` overrides `file_kind()` for specific files (e.g. `pip install -r` files with any name)."""
     if environment == "":
         raise SourceError("--environment needs a name")
     sources: list[Source] = []
@@ -3814,7 +3823,8 @@ def load_inputs(
             sources.append(load_directory(p, environment))
         elif p.is_file():
             constraints = requirements_constraints.get(p, ()) if requirements_constraints is not None else ()
-            sources.append(load_file(p, environment, constraints))
+            kind = file_kinds.get(p) if file_kinds is not None else None
+            sources.append(load_file(p, environment, constraints, kind=kind))
         elif "/" in item or item.endswith((".lock", ".txt", ".toml", ".json", ".in", ".yml", ".yaml")):
             raise SourceError(f"{item}: no such file")
         else:

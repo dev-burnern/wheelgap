@@ -4423,3 +4423,38 @@ def test_dockerfile_requirements_reads_only_plain_runs_on_a_windows_image(tmp_pa
         dockerfile_requirements(path)
     path = _context(tmp_path, head + "RUN pip install -r requirements.txt\n")
     assert dockerfile_requirements(path)
+
+
+@pytest.mark.parametrize("filename", ["requirements.pip", "deps.py", "pylock.toml", "deps"])
+def test_cli_dockerfile_inputs_reads_pip_requirements_under_any_filename(tmp_path, capsys, fake_pypi, filename):
+    (tmp_path / filename).write_text("purewheel==3.1\nnowheels==0.9\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        f"FROM python:3.13-slim\nWORKDIR /app\nCOPY {filename} .\nRUN pip install -r {filename}\n",
+        encoding="utf-8",
+    )
+    assert main(["--dockerfile", str(dockerfile), "--dockerfile-inputs", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert sorted((p["name"], p["version"]) for p in data["packages"]) == [
+        ("nowheels", "0.9"),
+        ("purewheel", "3.1"),
+    ]
+
+
+def test_cli_dockerfile_inputs_uv_still_refuses_non_requirements_filename_and_cli_keeps_script_reader(
+    tmp_path, capsys, fake_pypi
+):
+    (tmp_path / "deps.py").write_text("purewheel==3.1\nnowheels==0.9\n", encoding="utf-8")
+    uv_dockerfile = tmp_path / "Dockerfile"
+    uv_dockerfile.write_text(
+        "FROM python:3.13-slim\nWORKDIR /app\nCOPY --from=ghcr.io/astral-sh/uv:0.9.1 /uv /bin/\n"
+        "COPY deps.py .\nRUN uv pip install --system -r deps.py\n",
+        encoding="utf-8",
+    )
+    assert main(["--dockerfile", str(uv_dockerfile), "--dockerfile-inputs"]) == 2
+    uv_err = capsys.readouterr().err
+    assert "deps.py" in uv_err
+
+    assert main([str(tmp_path / "deps.py")]) == 2
+    cli_err = capsys.readouterr().err
+    assert "no # /// script block" in cli_err

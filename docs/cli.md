@@ -86,7 +86,9 @@ stages before it, since it may name one of them: pass its value with [`--build-a
 
 `--dockerfile-inputs` (with `--dockerfile`, and no `INPUT`): check the requirements files the Dockerfile's final stage
 installs with `RUN pip install -r FILE`, on the image's Python and platform, so "will this image build without
-compiling anything?" is one command (add `--deps` for what they pull in). `FILE` is followed back through `WORKDIR` and
+compiling anything?" is one command (add `--deps` for what they pull in). A `pip install -r` line's file is read as a
+requirements file whatever its name (`requirements.pip`, `deps.py`, extensionless names, etc.), as pip reads it. `FILE`
+is followed back through `WORKDIR` and
 `COPY` to a file in the build context, taken to be the Dockerfile's folder unless
 [`--dockerfile-context DIR`](#dockerfile-context) names another, and each one gets a note on stderr
 (`Dockerfile:4: RUN pip install -r reads requirements.txt`). After 0.13.0 the report says it too: in the header
