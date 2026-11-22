@@ -1049,6 +1049,13 @@ _CLI_ADVICE = {
         "so diff_lockfiles doesn't read it; pass lockfiles or requirements files "
         "(check_lockfile checks a pyproject.toml)"
     ),
+    (
+        "so check_lockfile() and wheelgap.diff don't read it; pass a lockfile "
+        "(the wheelgap command checks a script's # /// script block)"
+    ): (
+        "so diff_lockfiles doesn't read it; pass lockfiles or requirements files "
+        "(check_lockfile checks a script's # /// script block)"
+    ),
     # A uv.lock checked with offline: false. The tools have no text report, and return pip_refuses with a gap only.
     "(the text report's --explain says which, and --json lists the files in pip_refuses)": (
         "(a package with a gap lists the files in its pip_refuses)"

@@ -3541,8 +3541,22 @@ def test_diff_lockfiles_pyproject_error_uses_mcp_tool_names(tmp_path):
     text = reply["result"]["content"][0]["text"]
     assert "check_lockfile()" not in text
     assert "the wheelgap command" not in text
-    assert "diff_lockfiles" in text
+    assert "so diff_lockfiles doesn't read it" in text
     assert "check_lockfile checks a pyproject.toml" in text
+
+
+def test_diff_lockfiles_script_error_uses_mcp_tool_names(tmp_path):
+    script = tmp_path / "tool.py"
+    script.write_text('# /// script\n# dependencies = ["six==1.16.0"]\n# ///\nimport six\n', encoding="utf-8")
+    reqs = tmp_path / "requirements.txt"
+    reqs.write_text("six==1.16.0\n", encoding="utf-8")
+    (_, reply) = run(init(), call("diff_lockfiles", old=str(script), new=str(reqs)))
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert "check_lockfile()" not in text
+    assert "the wheelgap command" not in text
+    assert "so diff_lockfiles doesn't read it" in text
+    assert "check_lockfile checks a script's # /// script block" in text
 
 
 def test_tool_result_translates_source_error_reaching_it_directly(monkeypatch):
