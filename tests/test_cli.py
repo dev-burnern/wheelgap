@@ -4040,13 +4040,15 @@ def test_github_annotations_keep_lines_when_included_file_is_reached_via_symlink
     sub.mkdir()
     (sub / "more.txt").write_text("fastlib==2.0.0\n", encoding="utf-8")
     try:
-        (sub / "link.txt").symlink_to("../shared.txt")
+        # A Path, so Windows gets ..\shared.txt: a / in a relative link target dangles there.
+        (sub / "link.txt").symlink_to(Path("../shared.txt"))
     except OSError:
         pytest.skip("symlinks unavailable on this platform/user")
     req = tmp_path / "requirements.txt"
     req.write_text("-r shared.txt\n-r sub/link.txt\nnowheels==0.9\n", encoding="utf-8")
 
-    _, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "musl-aarch64", "--github-annotations")
+    code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "musl-aarch64", "--github-annotations")
+    assert code == 1, err
     lines = annotation_lines(out)
     assert any(line.startswith("::error file=requirements.txt,line=3,title=nowheels 0.9") for line in lines)
     assert any(line.startswith("::error file=sub/more.txt,line=1,title=fastlib 2.0.0") for line in lines)
