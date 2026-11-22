@@ -1042,6 +1042,8 @@ _CLI_ADVICE = {
     "check a lockfile instead (uv lock, or pip-compile)": (
         "make a lockfile (uv lock, or pip-compile) and call check_lockfile on it"
     ),
+    # check_package's dependency tree past deps.MAX_PACKAGES.
+    "packages; check a lockfile instead": "packages; make a lockfile and call check_lockfile on it",
     (
         "so check_lockfile() and wheelgap.diff don't read it; pass a lockfile "
         "(the wheelgap command checks a pyproject.toml)"

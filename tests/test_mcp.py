@@ -846,6 +846,11 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
             True,
             None,
         ),
+        (
+            "more than 2000 packages; check a lockfile instead",
+            False,
+            "more than 2000 packages; make a lockfile and call check_lockfile on it",
+        ),
         ("/srv/--fix/uv.lock: no such file or directory", True, None),
         ("C:\\srv\\--deps\\uv.lock: invalid TOML", True, None),
     ],
