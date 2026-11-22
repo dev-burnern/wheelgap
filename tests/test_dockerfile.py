@@ -4425,7 +4425,7 @@ def test_dockerfile_requirements_reads_only_plain_runs_on_a_windows_image(tmp_pa
     assert dockerfile_requirements(path)
 
 
-@pytest.mark.parametrize("filename", ["requirements.pip", "deps.py", "pylock.toml", "deps"])
+@pytest.mark.parametrize("filename", ["requirements.pip", "deps.py", "pylock.a.b.toml", "deps"])
 def test_cli_dockerfile_inputs_reads_pip_requirements_under_any_filename(tmp_path, capsys, fake_pypi, filename):
     (tmp_path / filename).write_text("purewheel==3.1\nnowheels==0.9\n", encoding="utf-8")
     dockerfile = tmp_path / "Dockerfile"
@@ -4440,6 +4440,17 @@ def test_cli_dockerfile_inputs_reads_pip_requirements_under_any_filename(tmp_pat
         ("purewheel", "3.1"),
     ]
 
+
+@pytest.mark.parametrize("filename", ["pylock.toml", "pylock.dev.toml"])
+def test_cli_dockerfile_inputs_reads_a_pip_lines_pylock_as_a_lock(tmp_path, capsys, fake_pypi, fixtures, filename):
+    # pip 26.1 and later install `pip install -r pylock.toml` (or pylock.NAME.toml) as a PEP 751 lock.
+    (tmp_path / filename).write_bytes((fixtures / "pylockproj" / "pylock.toml").read_bytes())
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        f"FROM python:3.13-slim\nWORKDIR /app\nCOPY {filename} .\nRUN pip install -r {filename}\n", encoding="utf-8"
+    )
+    main(["--dockerfile", str(dockerfile), "--dockerfile-inputs", "--json"])
+    assert "fastlib" in {p["name"] for p in json.loads(capsys.readouterr().out)["packages"]}
 
 def test_cli_dockerfile_inputs_uv_still_refuses_non_requirements_filename_and_cli_keeps_script_reader(
     tmp_path, capsys, fake_pypi

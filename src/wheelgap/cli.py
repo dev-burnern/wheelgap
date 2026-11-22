@@ -1452,6 +1452,9 @@ def target_lines(
 
 
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
+# PEP 751 lock names (packaging.pylock.is_valid_pylock_path): pip 26.1 and later install `pip install -r pylock.toml`
+# (or pylock.NAME.toml) as that lock, not as a requirements file.
+_PIP_PYLOCK_NAME_RE = re.compile(r"pylock(?:\.[^.]+)?\.toml")
 
 
 def _md(text: str) -> str:
@@ -2417,7 +2420,14 @@ def _main(argv: list[str], project: Path | None = None) -> int:
             elif args.dockerfile_inputs:
                 # The requirements files the install lines read, then the requirements they name: one source per
                 # RUN line, labelled with it, checked as names on wheelgap's own command line are.
-                docker_kinds = {req: "requirements" for line, req in installs if (line, req) not in uv_installs}
+                # pip reads a `pip install -r FILE` file as requirements whatever its name, except a PEP 751 lock
+                # name (pylock.toml, pylock.NAME.toml), which pip 26.1 and later install as that lock; a uv line's
+                # file keeps the reader its name picks.
+                docker_kinds = {
+                    req: "pylock" if _PIP_PYLOCK_NAME_RE.fullmatch(req.name) else "requirements"
+                    for line, req in installs
+                    if (line, req) not in uv_installs
+                }
                 sources = (
                     load_inputs(
                         args.inputs,
