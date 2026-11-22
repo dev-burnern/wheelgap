@@ -88,7 +88,8 @@ The same folder also keeps, for 24 hours each:
 And for 1 hour:
 
 - `--fix`'s gap wheel list, once it has been read and has at least one usable entry (short enough to catch freshly
-  published wheels without each CI matrix job having to fetch it).
+  published wheels without each CI matrix job having to fetch it). When a cached copy fills none of the run's gaps,
+  wheelgap answers from it if it was fetched less than 5 minutes ago and refreshes it once it is older.
 
 They follow `--no-cache` and `--online` like the other lookups.
 

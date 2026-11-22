@@ -1937,9 +1937,10 @@ def gap_wheel_fills(
 ) -> list[gapwheels.Fill]:
     """--fix: the gap cells a wheel on wheelgap's gap wheel index fills. The list is read in one request that names no
     package, only when a gap of a package that is positively PyPI's could use it (gapwheels.eligible), and never when
-    packages come from another index. A cached list (cache.GAP_WHEELS_MAX_AGE) answers only when it fills at least one
-    of this run's gaps: before saying none fits, the list is fetched once more, since new wheels are published most
-    days. Notes on stderr say when it wasn't read, couldn't be (or couldn't be refreshed), or nothing fits."""
+    packages come from another index. A cached list (cache.GAP_WHEELS_MAX_AGE) answers when it fills at least one of
+    this run's gaps, or when it fills none and was saved less than cache.GAP_WHEELS_RECHECK_AGE ago; otherwise the list
+    is fetched once more before saying none fits, since new wheels are published most days. Notes on stderr say when
+    it wasn't read, couldn't be (or couldn't be refreshed), or that nothing on the list fetched at a given time fits."""
     other = origin.other_index(index_url)
     if other is not None:
         if not quiet:
@@ -1975,6 +1976,15 @@ def gap_wheel_fills(
                 fills = gapwheels.fillable(wanted, targets, source_of, cached_wheels, private, index_url)
                 if fills:
                     return fills
+                if saved_time is not None and cache._now() - saved_time < cache.GAP_WHEELS_RECHECK_AGE:
+                    if not quiet:
+                        time_str = datetime.datetime.fromtimestamp(saved_time, datetime.UTC).strftime("%H:%M UTC")
+                        print(
+                            f"wheelgap: note: --fix: no wheel on the gap wheel list fetched at {time_str} "
+                            "fills these gaps",
+                            file=sys.stderr,
+                        )
+                    return []
         live_wheels = gapwheels.fetch(write_cache=write_cache)
         if live_wheels is None:
             if cached_wheels is not None and saved_time is not None:
@@ -1992,7 +2002,11 @@ def gap_wheel_fills(
             return []
         fills = gapwheels.fillable(wanted, targets, source_of, live_wheels, private, index_url)
         if not fills and not quiet:
-            print("wheelgap: note: --fix: no wheel on the gap wheel index fills these gaps", file=sys.stderr)
+            time_str = datetime.datetime.fromtimestamp(cache._now(), datetime.UTC).strftime("%H:%M UTC")
+            print(
+                f"wheelgap: note: --fix: no wheel on the gap wheel list fetched at {time_str} fills these gaps",
+                file=sys.stderr,
+            )
     return fills
 
 

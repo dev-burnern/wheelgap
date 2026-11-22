@@ -1039,6 +1039,18 @@ _CLI_ADVICE = {
     "pass -p/-t instead": "use check_lockfile with python and targets instead",
     "pass -t and --glibc instead": "use check_lockfile with targets and glibc instead",
     "pass --build-arg if the build sets one": "pass build_args if the build supplies a value",
+    # WHEELGAP_INDEX_URL is a JSON API mirror (pypi.check_index_url refuses /simple), not a simple index, so the advice
+    # for a simple index is index-url in [tool.wheelgap], which takes no credentials.
+    "pass the URL with --index-url from a CI secret instead": (
+        "an MCP tool can't take an index URL with credentials: set index-url in [tool.wheelgap] to one without "
+        "them, or run wheelgap --index-url from a shell"
+    ),
+    "To use a simple index, pass --index-url instead.": (
+        "To use a simple index, set index-url in [tool.wheelgap] (a URL without credentials) for the tools that "
+        "check a project's files."
+    ),
+    "select targets with -t": "pass targets explicitly",
+    "add it to -t as well": "include it in targets as well",
     "check a lockfile instead (uv lock, or pip-compile)": (
         "make a lockfile (uv lock, or pip-compile) and call check_lockfile on it"
     ),
@@ -1078,6 +1090,14 @@ _CLI_ADVICE = {
     "--dist": "check_dist",
     "--ignore": "ignore in [tool.wheelgap]",
     "(--index-url, or index-url in [tool.wheelgap])": "(index-url in [tool.wheelgap])",
+    # Over MCP only the [tool.wheelgap] value reaches the URL checks (pypi.check_index_url) and the notes that name
+    # another index. Bare --index-url, -t and -p aren't in the table: error text quotes requirements and Dockerfile
+    # lines (`pip ignores --index-url after a requirement`, mkdir -p, cp -t), so only wheelgap's own phrases change.
+    "(--index-url)": "(index-url in [tool.wheelgap])",
+    "--index-url is empty": "index-url in [tool.wheelgap] is empty",
+    "--index-url is not a valid URL": "index-url in [tool.wheelgap] is not a valid URL",
+    "--index-url must be an http(s) URL": "index-url in [tool.wheelgap] must be an http(s) URL",
+    "--index-url must use https": "index-url in [tool.wheelgap] must use https",
 }
 # The same advice from a tool that has no offline, dependencies or environment argument (check_dockerfile, check_dist).
 _CLI_ADVICE_ELSEWHERE = {
@@ -1090,6 +1110,19 @@ _CLI_ADVICE_ELSEWHERE = {
 _CLI_ADVICE_RE = re.compile(
     r"(?<![\w/\\-])(?<!pip install )(?:" + "|".join(map(re.escape, _CLI_ADVICE)) + r")(?![\w/\\-])"
 )
+# Advice that names a Python version, so it can't be a fixed phrase above. check_dockerfile has no python argument:
+# the Python it checks is the image's, so the other way out of a `python3.12 -m pip` line is check_lockfile.
+_CLI_ADVICE_VERSIONED = [
+    (
+        re.compile(r"(?<![\w/\\-])try -p (\d+\.\d+t?) -t pyodide(?![\w/\\-])"),
+        r"try python '\1' with targets ['pyodide']",
+    ),
+    (
+        re.compile(r"(?<![\w/\\-])or check with -p (\d+\.\d+t?)(?![\w/\\-])"),
+        r"or call check_lockfile on the requirements files with python '\1', the image's platform as targets, and "
+        r"its glibc (or musl) version as glibc (or musl)",
+    ),
+]
 
 
 def _translate_cli_message(message: str, *, lockfile: bool = False) -> str:
@@ -1104,7 +1137,14 @@ def _translate_cli_message(message: str, *, lockfile: bool = False) -> str:
             return _CLI_ADVICE_ELSEWHERE[match[0]]
         return _CLI_ADVICE[match[0]]
 
-    return _CLI_ADVICE_RE.sub(replace, message)
+    message = _CLI_ADVICE_RE.sub(replace, message)
+    for pattern, advice in _CLI_ADVICE_VERSIONED:
+
+        def versioned(match: re.Match[str], text: str = message, advice: str = advice) -> str:
+            return match[0] if text.count("`", 0, match.start()) % 2 else match.expand(advice)
+
+        message = pattern.sub(versioned, message)
+    return message
 
 
 def _run_cli(
