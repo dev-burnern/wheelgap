@@ -853,10 +853,117 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
         ),
         ("/srv/--fix/uv.lock: no such file or directory", True, None),
         ("C:\\srv\\--deps\\uv.lock: invalid TOML", True, None),
+        (
+            "[tool.wheelgap] index-url must not contain credentials: "
+            "pass the URL with --index-url from a CI secret instead",
+            True,
+            "[tool.wheelgap] index-url must not contain credentials: "
+            "an MCP tool can't take an index URL with credentials: set index-url in [tool.wheelgap] to one without "
+            "them, or run wheelgap --index-url from a shell",
+        ),
+        (
+            "WHEELGAP_INDEX_URL points at a simple index (pkgs.example.com); wheelgap needs the JSON API, "
+            "e.g. https://pypi.org/pypi. To use a simple index, pass --index-url instead.",
+            True,
+            "WHEELGAP_INDEX_URL points at a simple index (pkgs.example.com); wheelgap needs the JSON API, "
+            "e.g. https://pypi.org/pypi. To use a simple index, set index-url in [tool.wheelgap] (a URL without "
+            "credentials) for the tools that check a project's files.",
+        ),
+        (
+            "--index-url must use https (plain http is only allowed for localhost)",
+            True,
+            "index-url in [tool.wheelgap] must use https (plain http is only allowed for localhost)",
+        ),
+        (
+            "pyproject.toml [tool.uv] required-environments matches none of the native targets for Python 3.13, "
+            "so the default targets are checked; select targets with -t",
+            True,
+            "pyproject.toml [tool.uv] required-environments matches none of the native targets for Python 3.13, "
+            "so the default targets are checked; pass targets explicitly",
+        ),
+        ("add it to -t as well", True, "include it in targets as well"),
+        # Short flags must not match inside longer flags, paths, or pip install commands.
+        ("unknown flag --no-try", True, None),
+        ("/srv/-t/uv.lock: no such file or directory", True, None),
+        ("Dockerfile:4: pip install -t /tmp/pkg six", False, None),
+        # Short flags in a quoted Dockerfile line are the shell's, not wheelgap's.
+        ("RUN <<\"EOF mkdir -p /app: Docker can't read the heredoc", False, None),
+        ("Dockerfile:4: pip install --no-deps -t /deps six", False, None),
+        ("Dockerfile:5: docker build -t app .", False, None),
+        # pip's own --index-url, quoted from a requirements file, is the file's option, not wheelgap's.
+        ("requirements.txt:1: pip ignores --index-url after a requirement", True, None),
+        ("requirements.txt:1: pip refuses this line: --index-url option requires 1 argument", True, None),
+        (
+            "requirements.txt:1: pip refuses this line: ambiguous option: --index (--extra-index-url, --index-url?)",
+            True,
+            None,
+        ),
+        (
+            "note: --suggest looks nothing up when packages come from another index (--index-url)",
+            True,
+            "note: --suggest looks nothing up when packages come from another index (index-url in [tool.wheelgap])",
+        ),
+        (
+            "--index-url is empty (is a CI variable unset?)",
+            True,
+            "index-url in [tool.wheelgap] is empty (is a CI variable unset?)",
+        ),
+        ("--index-url is not a valid URL", True, "index-url in [tool.wheelgap] is not a valid URL"),
+        ("--index-url must be an http(s) URL", True, "index-url in [tool.wheelgap] must be an http(s) URL"),
+        # Advice that names a Python version: check_dockerfile has no python argument, check_package has one.
+        (
+            "`python3.12 -m pip install -r requirements.txt` installs for Python 3.12, and this run checks 3.13: "
+            "run pip with the image's own Python, or check with -p 3.12",
+            False,
+            "`python3.12 -m pip install -r requirements.txt` installs for Python 3.12, and this run checks 3.13: "
+            "run pip with the image's own Python, or call check_lockfile on the requirements files with python "
+            "'3.12', the image's platform as targets, and its glibc (or musl) version as glibc (or musl)",
+        ),
+        (
+            "pyodide-lock.json is for Python 3.12 (Pyodide 0.27.0), but no pyodide target uses Python 3.12 "
+            "(pyodide targets: 3.13); try -p 3.12 -t pyodide",
+            False,
+            "pyodide-lock.json is for Python 3.12 (Pyodide 0.27.0), but no pyodide target uses Python 3.12 "
+            "(pyodide targets: 3.13); try python '3.12' with targets ['pyodide']",
+        ),
+        ("RUN cd /src && try -p 3.12 -t pyodide-build", False, None),
+        ("`wheelgap PATH or check with -p 3.12`", False, None),
     ],
 )
 def test_cli_advice_is_translated_for_the_calling_tool(message, lockfile, translated):
     assert mcp._translate_cli_message(message, lockfile=lockfile) == (translated or message)
+
+
+def test_check_lockfile_translates_index_url_credentials_and_short_target_flag(fake_pypi, tmp_path):
+    # 1. Credentials in [tool.wheelgap] index-url: error must not tell MCP client to pass --index-url.
+    cred_dir = tmp_path / "creds"
+    cred_dir.mkdir()
+    (cred_dir / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (cred_dir / "pyproject.toml").write_text(
+        '[tool.wheelgap]\nindex-url = "https://user:secret@pkgs.example.com/simple"\n',
+        encoding="utf-8",
+    )
+    (_, cred_reply) = run(init(), call("check_lockfile", path=str(cred_dir / "requirements.txt"), python="3.13"))
+    assert cred_reply["result"]["isError"] is True
+    cred_text = cred_reply["result"]["content"][0]["text"]
+    assert "--index-url from a CI secret" not in cred_text
+    assert "set index-url in [tool.wheelgap] to one without them" in cred_text
+    assert "WHEELGAP_INDEX_URL" not in cred_text
+
+    # 2. Unmatched [tool.uv] required-environments: note must not tell MCP client to select targets with -t.
+    env_dir = tmp_path / "env"
+    env_dir.mkdir()
+    (env_dir / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (env_dir / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+        "[tool.uv]\nrequired-environments = [\"sys_platform == 'freebsd'\"]\n",
+        encoding="utf-8",
+    )
+    (_, env_reply) = run(init(), call("check_lockfile", path=str(env_dir / "requirements.txt"), python="3.13"))
+    assert env_reply["result"]["isError"] is False
+    notes = env_reply["result"]["structuredContent"].get("notes", [])
+    assert any("pass targets explicitly" in note for note in notes)
+    assert all(" -t" not in note for note in notes)
 
 
 def test_check_lockfile_ignores_from_config(fake_pypi, tmp_path, fixtures):
@@ -1195,6 +1302,23 @@ def test_check_dockerfile_inputs_refused_line_is_a_tool_error_with_its_line(fake
     # -r FILE and --no-cache-dir are pip's own options, in the Dockerfile's words: they stay.
     assert f"{dockerfile}:4: pip install --pre: the inputs argument only reads -r FILE" in text
     assert "--dockerfile-inputs" not in text  # the CLI's flag isn't an argument here
+    assert not fake_pypi
+
+
+def test_check_dockerfile_inputs_other_python_names_no_python_flag(fake_pypi, tmp_path):
+    # check_dockerfile checks the image's Python and has no python argument, so -p is no way out (#669).
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.13\nWORKDIR /app\nCOPY requirements.txt .\nRUN python3.12 -m pip install -r requirements.txt\n",
+        encoding="utf-8",
+    )
+    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(dockerfile), inputs=True))
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert "installs for Python 3.12, and this run checks 3.13" in text
+    assert "check_lockfile on the requirements files with python '3.12'" in text
+    assert "-p 3.12" not in text
     assert not fake_pypi
 
 
