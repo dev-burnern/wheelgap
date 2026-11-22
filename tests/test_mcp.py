@@ -917,7 +917,7 @@ def test_check_lockfile_offline_false_note_about_pip_names_no_flag(fake_pypi, tm
             False,
             "`python3.12 -m pip install -r requirements.txt` installs for Python 3.12, and this run checks 3.13: "
             "run pip with the image's own Python, or call check_lockfile on the requirements files with python "
-            "'3.12' and the image's platform as targets",
+            "'3.12', the image's platform as targets, and its glibc (or musl) version as glibc (or musl)",
         ),
         (
             "pyodide-lock.json is for Python 3.12 (Pyodide 0.27.0), but no pyodide target uses Python 3.12 "

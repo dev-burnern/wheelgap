@@ -1119,7 +1119,8 @@ _CLI_ADVICE_VERSIONED = [
     ),
     (
         re.compile(r"(?<![\w/\\-])or check with -p (\d+\.\d+t?)(?![\w/\\-])"),
-        r"or call check_lockfile on the requirements files with python '\1' and the image's platform as targets",
+        r"or call check_lockfile on the requirements files with python '\1', the image's platform as targets, and "
+        r"its glibc (or musl) version as glibc (or musl)",
     ),
 ]
 
